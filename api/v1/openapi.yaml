@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/OAI/OpenAPI-Specification/main/schemas/v3.0/schema.json
 openapi: 3.0.3
 info:
   title: Linux File Magic API
@@ -64,6 +65,13 @@ paths:
                   request_id: { $ref: '#/components/schemas/RequestId' }
 
 components:
+  securitySchemes:
+      basicAuth:
+        type: http
+        scheme: basic
+        description: >
+          Standard HTTP Basic Authentication. 
+          Credentials should be sent in the 'Authorization' header.
   schemas:
     RequestId:
       type: string
