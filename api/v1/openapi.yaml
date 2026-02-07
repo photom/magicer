@@ -1,0 +1,114 @@
+openapi: 3.0.3
+info:
+  title: Linux File Magic API
+  version: 1.5.2
+  description: >
+    REST API for libmagic analysis on Linux x86_64.
+    - **Protocol:** Versioned URI paths (/v1).
+    - **Security:** Strict relative path validation and 100MB body limit.
+    - **Tracing:** X-Request-ID included in all JSON responses.
+
+paths:
+  /v1/magic/content:
+    post:
+      summary: Analyze via raw octet-stream (v1)
+      parameters:
+        - in: query
+          name: filename
+          required: true
+          schema:
+            $ref: '#/components/schemas/WindowsCompatibleFilename'
+          example: "analysis_data.bin"
+      requestBody:
+        required: true
+        description: Raw binary data (Max 100MB).
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          $ref: '#/components/responses/MagicResponse'
+
+  /v1/magic/path:
+    post:
+      summary: Analyze via local relative path (v1)
+      parameters:
+        - in: query
+          name: filename
+          required: true
+          schema:
+            $ref: '#/components/schemas/WindowsCompatibleFilename'
+        - in: query
+          name: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/RelativePath'
+      responses:
+        '200':
+          $ref: '#/components/responses/MagicResponse'
+
+  /v1/ping:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: pong
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: "pong" }
+                  request_id: { $ref: '#/components/schemas/RequestId' }
+
+components:
+  schemas:
+    RequestId:
+      type: string
+      format: uuid
+      example: "550e8400-e29b-41d4-a716-446655440000"
+
+    WindowsCompatibleFilename:
+      type: string
+      # Windows MAX_PATH (260) + 50 = 310
+      maxLength: 310 
+      pattern: '^[^/\0]+$'
+      description: >
+        UTF-8 encoded filename. 
+        **Note:** This API intentionally accepts filenames that violate standard 
+        Windows filesystem constraints. It allows up to 310 characters (exceeding 
+        the 260-character MAX_PATH) and does not restrict Windows-reserved 
+        characters, as the underlying platform is Linux.
+
+    RelativePath:
+      type: string
+      pattern: '^(?!\/)(?!.*(\.\.|\.\/|\/\/))(?!\.$)[^ ].*$'
+      description: Relative path (no traversal allowed).
+
+    MagicResult:
+      type: object
+      required: [request_id, filename, result]
+      properties:
+        request_id: { $ref: '#/components/schemas/RequestId' }
+        filename: { type: string }
+        result:
+          type: object
+          properties:
+            mime_type: { type: string }
+            description: { type: string }
+      example:
+        request_id: "550e8400-e29b-41d4-a716-446655440000"
+        filename: "example_file.dat"
+        result:
+          mime_type: "application/octet-stream"
+          description: "data"
+
+  responses:
+    MagicResponse:
+      description: Success
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MagicResult'

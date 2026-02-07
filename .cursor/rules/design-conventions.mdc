@@ -1,0 +1,60 @@
+---
+alwaysApply: true
+description: DDD, Clean Architecture, and SOLID Principles enforcement for Rust projects.
+---
+
+# Design Conventions
+
+## References
+- Domain-Driven Design (Eric Evans)
+- Clean Architecture (Robert C. Martin)
+- SOLID Principles
+
+## Layered Architecture (Clean Architecture)
+
+Organize code into four layers. Dependencies MUST point inward only.
+
+```
+presentation/ (API handlers, CLI, request/response types)
+  └─ depends on ─> application/
+application/ (use cases, application services, DTOs)
+  └─ depends on ─> domain/
+domain/ (entities, value objects, aggregates, repository traits, domain services, domain errors)
+infrastructure/ (repository impls, external clients, I/O adapters)
+  └─ implements traits from ─> domain/
+  └─ depends on ─> domain/
+```
+
+- **Domain**: Pure business logic. Zero external dependencies — no frameworks, no I/O crates, no async runtime types in public API. Only `std` and domain-specific crates.
+- **Application**: Orchestrates domain objects via use cases. Depends only on domain. Receives infrastructure through trait objects.
+- **Infrastructure**: Implements traits defined in the domain layer (repositories, gateways). Contains all I/O, serialization, and framework-specific code.
+- **Presentation**: Entrypoint layer. Wires dependencies together, translates external requests into application calls.
+
+## SOLID Principles (Rust-Specific)
+
+- **Single Responsibility**: Each module, struct, and function has exactly one reason to change. Split files exceeding ~300 lines.
+- **Open/Closed**: Extend behavior by adding new trait implementations, not by modifying existing code. Use generics and trait bounds for extensibility.
+- **Liskov Substitution**: Every trait implementation must fully honor the trait's documented contract, invariants, and error semantics. Never panic where the trait expects `Result`.
+- **Interface Segregation**: Define small, focused traits (1–3 methods). Prefer multiple narrow traits over one broad trait. Compose with supertraits only when there is a true "is-a" relationship.
+- **Dependency Inversion**: Depend on traits (abstractions), never on concrete types across layer boundaries. Accept dependencies as generic parameters bounded by traits or as `dyn Trait` objects.
+
+## DDD Building Blocks (Rust Idioms)
+
+| Building Block   | Rust Idiom |
+|------------------|------------|
+| **Entity**       | Struct with an `id` field. `PartialEq`/`Eq` compares identity only. |
+| **Value Object** | Struct with no identity. Derive `Eq`, `Clone`, `Hash` on all fields. Prefer immutable (no `&mut self` methods). |
+| **Aggregate**    | Module containing a root entity + related entities/value objects. External code accesses only the root. The root enforces all invariants. |
+| **Repository**   | `trait` in `domain/`. Async methods return domain types and domain errors. Implementations live in `infrastructure/`. |
+| **Domain Service** | Stateless function or struct in `domain/`. Encapsulates logic that spans multiple entities. |
+| **Domain Event** | Struct representing a past occurrence. Use for cross-aggregate or cross-bounded-context communication. |
+| **Domain Error** | Enum in `domain/`. Infrastructure errors are mapped into domain errors at the boundary. Never expose `sqlx::Error`, `std::io::Error`, etc. to the domain. |
+
+## Enforced Rules
+
+1. **No inward leakage**: Infrastructure types (DB rows, HTTP types, framework errors) MUST NOT appear in domain or application layers.
+2. **Trait boundaries**: Repository and gateway traits live in `domain/`; implementations live in `infrastructure/`.
+3. **Error mapping**: Convert infrastructure errors into domain errors at the infrastructure boundary using `From` or `map_err`.
+4. **Constructor injection**: Pass all dependencies (as trait objects or generics) through constructors — never use global state, lazy statics, or service locators.
+5. **Aggregate invariants**: All mutations go through aggregate root methods that validate invariants before applying changes.
+6. **No cyclic dependencies**: Modules within a layer MUST NOT have circular `use` imports. Use domain events or mediators to decouple.
