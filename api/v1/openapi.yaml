@@ -8,10 +8,23 @@ info:
     - **Protocol:** Versioned URI paths (/v1).
     - **Security:** Strict relative path validation and 100MB body limit.
     - **Tracing:** X-Request-ID included in all JSON responses.
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+  - url: https://api.example.com
+    description: Production server
+
+security:
+  - basicAuth: []
 
 paths:
   /v1/magic/content:
     post:
+      operationId: analyzeMagicContent
       summary: Analyze via raw octet-stream (v1)
       parameters:
         - in: query
@@ -31,9 +44,18 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/MagicResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /v1/magic/path:
     post:
+      operationId: analyzeMagicPath
       summary: Analyze via local relative path (v1)
       parameters:
         - in: query
@@ -49,10 +71,20 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/MagicResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /v1/ping:
     get:
+      operationId: healthCheck
       summary: Health check
+      security: []
       responses:
         '200':
           description: pong
@@ -63,6 +95,8 @@ paths:
                 properties:
                   message: { type: string, example: "pong" }
                   request_id: { $ref: '#/components/schemas/RequestId' }
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
 components:
   securitySchemes:
@@ -120,3 +154,53 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/MagicResult'
+    
+    BadRequest:
+      description: Bad Request - Invalid parameters or malformed request
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, example: "Invalid filename parameter" }
+              request_id: { $ref: '#/components/schemas/RequestId' }
+    
+    Unauthorized:
+      description: Unauthorized - Authentication required or failed
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, example: "Authentication required" }
+              request_id: { $ref: '#/components/schemas/RequestId' }
+    
+    NotFound:
+      description: Not Found - File path does not exist
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, example: "File not found" }
+              request_id: { $ref: '#/components/schemas/RequestId' }
+    
+    PayloadTooLarge:
+      description: Payload Too Large - Request body exceeds 100MB limit
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, example: "Request body exceeds 100MB limit" }
+              request_id: { $ref: '#/components/schemas/RequestId' }
+    
+    InternalServerError:
+      description: Internal Server Error - Unexpected server error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, example: "Internal server error" }
+              request_id: { $ref: '#/components/schemas/RequestId' }

@@ -1,0 +1,80 @@
+name: Generate OpenAPI Documentation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'api/v1/openapi.yaml'
+      - '.github/workflows/openapi-docs.yml'
+  pull_request:
+    paths:
+      - 'api/v1/openapi.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  generate-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Redoc CLI
+        run: npm install -g @redocly/cli
+
+      - name: Validate OpenAPI spec
+        run: redocly lint api/v1/openapi.yaml
+
+      - name: Generate HTML documentation
+        run: |
+          mkdir -p dist
+          redocly build-docs api/v1/openapi.yaml \
+            --output dist/index.html \
+            --title "Linux File Magic API Documentation"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-docs
+          path: dist/
+          retention-days: 90
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: generate-docs
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: openapi-docs
+          path: dist/
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload to Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
