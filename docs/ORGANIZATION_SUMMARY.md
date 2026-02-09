@@ -25,6 +25,7 @@ Status: Not yet created
 ### Reference (Information-Oriented)
 
 - `../api/v1/openapi.yaml` - REST API specification
+- `CONFIG.md` - Complete configuration reference
 - `HTTP_SERVER.md` - Server behavior and limits
 - `PROJECT_STRUCTURE.md` - Codebase organization
 - `TESTING_STRATEGY.md` - Testing approach

@@ -19,9 +19,10 @@ graph TB
     Task --> H3[🔜 Development Guide<br/>Suggested]
     
     Lookup --> R1[📚 API Documentation<br/>photom.github.io/magicer/]
-    Lookup --> R2[📚 Server Specification<br/>reference/HTTP_SERVER.md]
-    Lookup --> R3[📚 Project Structure<br/>reference/PROJECT_STRUCTURE.md]
-    Lookup --> R4[📚 Testing Strategy<br/>reference/TESTING_STRATEGY.md]
+    Lookup --> R2[📚 Configuration<br/>reference/CONFIG.md]
+    Lookup --> R3[📚 Server Specification<br/>reference/HTTP_SERVER.md]
+    Lookup --> R4[📚 Project Structure<br/>reference/PROJECT_STRUCTURE.md]
+    Lookup --> R5[📚 Testing Strategy<br/>reference/TESTING_STRATEGY.md]
     
     Understand --> E1[💡 Architecture Design<br/>explanation/ARCHITECTURE.md]
     Understand --> E2[💡 Design Summary<br/>explanation/DESIGN_SUMMARY.md]
@@ -39,6 +40,7 @@ graph TB
     style R2 fill:#e1ffe1
     style R3 fill:#e1ffe1
     style R4 fill:#e1ffe1
+    style R5 fill:#e1ffe1
     style E1 fill:#ffe1f5
     style E2 fill:#ffe1f5
 ```
@@ -57,11 +59,12 @@ graph TB
 | Task | Document |
 |------|----------|
 | Deploy the server | [DEPLOYMENT.md](how-to-guides/DEPLOYMENT.md) |
-| Understand architecture | [ARCHITECTURE.md](explanation/ARCHITECTURE.md) |
+| Configure the server | [CONFIG.md](reference/CONFIG.md) |
 | Look up API endpoints | [API Documentation](https://photom.github.io/magicer/) |
 | Find server limits | [HTTP_SERVER.md](reference/HTTP_SERVER.md) |
 | Understand codebase | [PROJECT_STRUCTURE.md](reference/PROJECT_STRUCTURE.md) |
 | Write tests | [TESTING_STRATEGY.md](reference/TESTING_STRATEGY.md) |
+| Understand architecture | [ARCHITECTURE.md](explanation/ARCHITECTURE.md) |
 | See complete design | [DESIGN_SUMMARY.md](explanation/DESIGN_SUMMARY.md) |
 
 ## By Type
@@ -77,6 +80,7 @@ graph TB
 ### 📚 Reference (Information-Oriented)
 
 - [API Documentation](https://photom.github.io/magicer/) ([source](../api/v1/openapi.yaml))
+- [CONFIG.md](reference/CONFIG.md)
 - [HTTP_SERVER.md](reference/HTTP_SERVER.md)
 - [PROJECT_STRUCTURE.md](reference/PROJECT_STRUCTURE.md)
 - [TESTING_STRATEGY.md](reference/TESTING_STRATEGY.md)

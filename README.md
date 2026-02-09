@@ -30,6 +30,7 @@ docs/
 |----------|----------|---------|
 | How-To | [Deployment](docs/how-to-guides/DEPLOYMENT.md) | Production deployment procedures |
 | Reference | [OpenAPI Spec](api/v1/openapi.yaml) | Complete REST API contract |
+| Reference | [Configuration](docs/reference/CONFIG.md) | Complete config.toml reference |
 | Reference | [HTTP Server](docs/reference/HTTP_SERVER.md) | Server behavior and limits |
 | Reference | [Project Structure](docs/reference/PROJECT_STRUCTURE.md) | Codebase organization |
 | Reference | [Testing Strategy](docs/reference/TESTING_STRATEGY.md) | Testing approach |
