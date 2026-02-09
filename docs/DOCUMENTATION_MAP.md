@@ -26,6 +26,7 @@ graph TB
     
     Understand --> E1[💡 Architecture Design<br/>explanation/ARCHITECTURE.md]
     Understand --> E2[💡 Design Summary<br/>explanation/DESIGN_SUMMARY.md]
+    Understand --> E3[💡 libmagic FFI<br/>explanation/LIBMAGIC_FFI.md]
     
     style Learn fill:#e1f5ff
     style Task fill:#fff4e1
@@ -43,6 +44,7 @@ graph TB
     style R5 fill:#e1ffe1
     style E1 fill:#ffe1f5
     style E2 fill:#ffe1f5
+    style E3 fill:#ffe1f5
 ```
 
 ## By Role
@@ -89,4 +91,5 @@ graph TB
 
 - [ARCHITECTURE.md](explanation/ARCHITECTURE.md)
 - [DESIGN_SUMMARY.md](explanation/DESIGN_SUMMARY.md)
+- [LIBMAGIC_FFI.md](explanation/LIBMAGIC_FFI.md)
 

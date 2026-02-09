@@ -36,6 +36,7 @@ docs/
 | Reference | [Testing Strategy](docs/reference/TESTING_STRATEGY.md) | Testing approach |
 | Explanation | [Architecture](docs/explanation/ARCHITECTURE.md) | System design and decisions |
 | Explanation | [Design Summary](docs/explanation/DESIGN_SUMMARY.md) | Complete design overview |
+| Explanation | [libmagic FFI](docs/explanation/LIBMAGIC_FFI.md) | Rust-C FFI integration |
 
 ## API Endpoints
 

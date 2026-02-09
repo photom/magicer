@@ -34,6 +34,7 @@ Status: Not yet created
 
 - `ARCHITECTURE.md` - System design and decisions
 - `DESIGN_SUMMARY.md` - Complete design overview
+- `LIBMAGIC_FFI.md` - Rust-C FFI integration explanation
 
 ## Navigation
 
