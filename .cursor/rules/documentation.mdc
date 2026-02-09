@@ -12,3 +12,4 @@ alwaysApply: true
 - Update the documents first, then update the code.
 - Documentation must comply with Diátaxis
 - Documentations are located in docs.
+- Explanation sentences must describe concisely.
