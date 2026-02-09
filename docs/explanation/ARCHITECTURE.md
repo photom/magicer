@@ -213,9 +213,12 @@ src/application/
 **Directory Structure:**
 ```
 src/infrastructure/
-├── magic/             # Libmagic wrapper implementation
+├── magic/             # Libmagic FFI bindings and implementation
+│   ├── ffi.rs        # Raw extern "C" declarations
+│   ├── wrapper.rs    # Safe Rust wrapper
+│   └── lib.rs        # Repository implementation
 ├── auth/              # Authentication service implementation
-├── filesystem/        # File system utilities and sandbox
+├── filesystem/        # File system utilities, sandbox, mmap, temp files
 └── config/            # Configuration loading and parsing
 ```
 
@@ -225,14 +228,20 @@ src/infrastructure/
 |-----------|---------|
 | `magic/libmagic_repository.rs` | Implements MagicRepository using libmagic C library |
 | `auth/basic_auth_service.rs` | Implements AuthenticationService with basic auth |
+| `magic/ffi.rs` | Raw FFI bindings to libmagic C API with extern declarations |
+| `magic/wrapper.rs` | Safe Rust wrapper over raw FFI with RAII cleanup |
+| `magic/libmagic_repository.rs` | Repository trait implementation using custom FFI |
 | `filesystem/sandbox.rs` | Path validation and sandbox boundary enforcement |
-| `filesystem/temp_file_handler.rs` | Temporary file management for content analysis |
+| `filesystem/mmap.rs` | Memory-mapped I/O abstraction for large files |
+| `filesystem/temp_file_handler.rs` | Streaming writes and RAII cleanup for temp files |
 | `config/server_config.rs` | Configuration file parsing and environment variable loading |
 
 **Implementation Notes:**
+- Custom FFI bindings built from scratch without using `magic` crate
 - Uses `tokio::task::spawn_blocking` for blocking libmagic calls
-- Maps external errors to domain error types at boundaries
+- Maps C errors to domain error types at FFI boundary
 - Provides thread-safe access to libmagic through Arc and Mutex
+- Uses memory-mapped I/O for efficient large file handling
 - Enforces path canonicalization and symlink policies
 
 ### 3.4. Presentation Layer
@@ -626,10 +635,13 @@ graph TB
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| LibmagicRepository | `infrastructure/magic/libmagic_repository.rs` | Thread-safe libmagic wrapper using Arc&lt;Mutex&gt; |
+| LibmagicRepository | `infrastructure/magic/libmagic_repository.rs` | Repository implementation coordinating FFI calls |
+| Raw FFI Bindings | `infrastructure/magic/ffi.rs` | Raw `extern "C"` declarations for libmagic |
+| Safe FFI Wrapper | `infrastructure/magic/wrapper.rs` | Safe Rust wrapper over raw FFI with RAII cleanup |
+| Mmap Handler | `infrastructure/filesystem/mmap.rs` | Memory-mapped I/O for large file analysis |
 | BasicAuthService | `infrastructure/auth/basic_auth_service.rs` | Credential verification with constant-time comparison |
 | PathSandbox | `infrastructure/filesystem/sandbox.rs` | Path canonicalization and boundary enforcement |
-| TempFileHandler | `infrastructure/filesystem/temp_file_handler.rs` | RAII-based temporary file management |
+| TempFileHandler | `infrastructure/filesystem/temp_file_handler.rs` | RAII-based temporary file management with streaming |
 | ServerConfig | `infrastructure/config/server_config.rs` | Configuration loading from TOML and environment |
 
 ---
@@ -1476,7 +1488,8 @@ sequenceDiagram
 | UUID | `uuid` | 1.x | Request ID generation |
 | Security | `subtle` | 2.x | Constant-time cryptographic operations |
 | Base64 | `base64` | 0.21 | Basic auth header parsing |
-| File Magic | `magic` | 0.16 | Rust bindings to libmagic |
+| Memory Mapping | `memmap2` | 0.9 | Memory-mapped file I/O |
+| Bitflags | `bitflags` | 2.x | Type-safe libmagic flag operations |
 | Error Handling | `thiserror` | 1.x | Derive macro for error types |
 | Error Context | `anyhow` | 1.x | Error context (main.rs only) |
 
@@ -1492,9 +1505,11 @@ sequenceDiagram
 
 **System Dependencies:**
 
-- `libmagic1` - Runtime library for file type identification
-- `libmagic-dev` - Development headers for compilation
-- `file` - Provides magic database files
+- `libmagic1` - Runtime shared library for file type identification (linked via FFI)
+- `libmagic-dev` - Development headers for FFI bindings (build-time only)
+- `file` - Provides magic database files (`/usr/share/misc/magic.mgc`)
+
+**Note:** This project builds libmagic FFI bindings from scratch as a learning exercise, not using the `magic` crate.
 
 ---
 
