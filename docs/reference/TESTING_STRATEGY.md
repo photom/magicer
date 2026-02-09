@@ -222,11 +222,15 @@ graph TB
 
 | Scenario | Mock Behavior | Expected Result |
 |----------|---------------|-----------------|
-| Valid content analysis | Return (MimeType, description) | Success with response DTO |
+| Small content (< threshold) | Return (MimeType, description) | Success, direct buffer analysis |
+| Large content (≥ threshold) | Return (MimeType, description) | Success, temp file + mmap |
 | Repository failure | Return MagicError | ApplicationError::MagicAnalysis |
 | Empty content | N/A (caught before repository call) | ApplicationError::Validation |
 | Timeout during analysis | Timeout after 30s | ApplicationError::Timeout |
 | Large payload (100MB) | Return success | Success (boundary test) |
+| Temp file creation fails | Disk full scenario | ApplicationError::InsufficientStorage |
+| Temp file cleanup on error | Mock returns error | Temp file still deleted (RAII) |
+| Concurrent large files | Multiple parallel requests | All succeed, no file conflicts |
 
 **AnalyzePathUseCase Test Scenarios:**
 
@@ -244,7 +248,331 @@ graph TB
 - Verify mock methods called with correct parameters
 - Test both success and failure paths
 
-### 4.3. Infrastructure Layer Testing
+### 4.3. Large Content Handling Testing
+
+**Test Location:** `tests/unit/application/use_cases/large_content_tests.rs`
+
+#### Unit Tests with Mocks
+
+| Test Case | Setup | Verification |
+|-----------|-------|--------------|
+| Threshold detection | Content exactly at threshold | Correct path chosen (memory vs file) |
+| Buffer writing | Large content > threshold | Content written in chunks |
+| Mmap creation | Temp file created | Mmap slice matches original content |
+| Cleanup on success | Analysis completes | Temp file deleted |
+| Cleanup on error | Analysis fails | Temp file still deleted |
+| Concurrent requests | Multiple large files | Unique temp file names, no conflicts |
+
+#### Integration Tests
+
+**Test Location:** `tests/integration/large_content_tests.rs`
+
+| Test Case | Input | Expected Behavior |
+|-----------|-------|-------------------|
+| Small file (1MB) | Text content | Direct buffer analysis, no temp file |
+| At threshold (10MB) | Binary content | File-based analysis triggered |
+| Large file (50MB) | PDF content | Streamed to temp, mmap analysis |
+| Very large (100MB) | Max size payload | Success with file-based analysis |
+| Disk full scenario | Mock filesystem full | 507 Insufficient Storage error |
+| Mmap failure | Mock mmap error | Graceful error handling |
+| Temp dir missing | Missing directory | Automatic creation or clear error |
+| Permission denied | Read-only temp dir | 500 Internal Server Error |
+
+#### Resource Management Tests
+
+**Test Location:** `tests/integration/resource_management_tests.rs`
+
+```mermaid
+graph TB
+    Test[Test: Resource Cleanup]
+    
+    Test --> Create[Create 100 large requests]
+    Create --> Execute[Execute concurrently]
+    Execute --> Monitor[Monitor temp directory]
+    Monitor --> Check{All files cleaned?}
+    Check -->|Yes| Pass[Test Pass]
+    Check -->|No| Fail[Test Fail]
+    
+    style Pass fill:#e1ffe1
+    style Fail fill:#ffe1e1
+```
+
+| Test Case | Scenario | Verification |
+|-----------|----------|--------------|
+| Serial cleanup | Process 100 requests serially | Zero temp files remain |
+| Concurrent cleanup | 50 concurrent large requests | All temp files cleaned |
+| Panic during analysis | Force panic in analysis | Drop runs, file deleted |
+| Timeout with cleanup | Request times out | Temp file cleaned before timeout response |
+| Orphaned file detection | Manually create old temp files | Background cleanup removes them |
+
+#### Performance Tests
+
+**Test Location:** `benches/large_content_benchmark.rs`
+
+| Benchmark | Input Size | Measured Metric |
+|-----------|-----------|-----------------|
+| Memory analysis | 1MB, 5MB, 9MB | Throughput (req/s) |
+| File-based analysis | 10MB, 50MB, 100MB | Throughput (req/s) |
+| Write buffer impact | 10MB with 16KB, 64KB, 256KB buffers | Write time |
+| Mmap overhead | 10MB file vs buffer | Analysis time difference |
+| Concurrent large files | 10 x 50MB files | Total time, resource usage |
+
+#### Memory Profiling Tests
+
+```mermaid
+graph LR
+    Small[Small File Test] --> Profile1[Memory Usage]
+    Large[Large File Test] --> Profile2[Memory Usage]
+    
+    Profile1 --> Compare{Compare}
+    Profile2 --> Compare
+    
+    Compare --> Verify[Verify Large < Small + File Size]
+    
+    style Verify fill:#e1ffe1
+```
+
+**Test Strategy:**
+- Use memory profiler (e.g., valgrind massif)
+- Compare memory usage: small file vs large file
+- Verify large file doesn't load entire content into memory
+- Confirm mmap doesn't duplicate data
+
+### 4.4. libmagic FFI Testing
+
+**Test Location:** `tests/infrastructure/magic/ffi_tests.rs`
+
+#### Raw FFI Binding Tests
+
+Testing the unsafe FFI layer with minimal abstractions.
+
+| Test Case | Setup | Verification |
+|-----------|-------|--------------|
+| Cookie creation | Call `magic_open` with flags | Returns non-NULL pointer |
+| Cookie creation failure | Mock resource exhaustion | Returns NULL, handled safely |
+| Database loading | Call `magic_load` with default path | Returns 0 (success) |
+| Database load failure | Invalid database path | Returns -1, errno set |
+| Buffer analysis | Call `magic_buffer` with known data | Returns valid C string pointer |
+| File analysis | Call `magic_file` with existing file | Returns valid C string pointer |
+| Error retrieval | Force error, call `magic_error` | Returns error message string |
+| Errno retrieval | Force error, call `magic_errno` | Returns valid errno code |
+| Cookie cleanup | Call `magic_close` | No crash, valgrind shows no leak |
+| Double close safety | Call `magic_close` twice | Second call on NULL safe |
+
+#### Safe Wrapper Tests
+
+Testing the safe Rust wrapper over raw FFI.
+
+```mermaid
+graph TB
+    Wrapper[Safe Wrapper] --> Construction[Construction Tests]
+    Wrapper --> Methods[Method Tests]
+    Wrapper --> Safety[Safety Tests]
+    Wrapper --> Cleanup[Cleanup Tests]
+    
+    Construction --> Create[Valid creation]
+    Construction --> Fail[Creation failure]
+    
+    Methods --> Analyze[Analysis methods]
+    Methods --> Error[Error handling]
+    
+    Safety --> Thread[Thread safety]
+    Safety --> Panic[Panic safety]
+    
+    Cleanup --> Drop[Drop implementation]
+    Cleanup --> RAII[RAII guarantees]
+    
+    style Wrapper fill:#e1f5ff
+    style Safety fill:#ffe1e1
+```
+
+**Test Scenarios:**
+
+| Test Case | Test Type | Verification |
+|-----------|-----------|--------------|
+| **Construction** | | |
+| MagicCookie::new() success | Unit | Cookie created, pointer non-null |
+| MagicCookie::new() with flags | Unit | Flags applied correctly |
+| Creation with invalid flags | Unit | Error returned, no panic |
+| **Analysis Methods** | | |
+| analyze_buffer() text | Integration | Detects "text/plain" |
+| analyze_buffer() binary | Integration | Detects correct MIME type |
+| analyze_buffer() empty | Integration | Returns result, no panic |
+| analyze_file() existing | Integration | Correct detection |
+| analyze_file() missing | Integration | Returns NotFound error |
+| **String Handling** | | |
+| C string to Rust conversion | Unit | UTF-8 validation |
+| Invalid UTF-8 from libmagic | Unit | Returns InvalidUtf8 error |
+| NULL pointer handling | Unit | Returns NullPointer error |
+| String lifetime safety | Unit | Copy made before next call |
+| **Thread Safety** | | |
+| Sequential access | Unit | Multiple calls succeed |
+| Arc<Mutex<Cookie>> pattern | Integration | Concurrent access safe |
+| !Send + !Sync marker | Compile | Won't compile if sent across threads |
+| **Memory Safety** | | |
+| Drop runs on panic | Unit | RAII cleanup verified |
+| Drop with NULL pointer | Unit | Safe no-op |
+| No use-after-free | Miri | Miri detects no violations |
+| No double-free | Valgrind | Valgrind shows clean exit |
+| No memory leaks | Valgrind | All allocations freed |
+
+#### Error Conversion Tests
+
+**Test Location:** `tests/infrastructure/magic/error_tests.rs`
+
+| C Error Scenario | Errno | Expected Rust Error |
+|------------------|-------|---------------------|
+| Database not found | ENOENT (2) | MagicError::DatabaseLoad("No such file") |
+| Permission denied | EACCES (13) | MagicError::DatabaseLoad("Permission denied") |
+| Out of memory | ENOMEM (12) | MagicError::CreationFailed |
+| Invalid argument | EINVAL (22) | MagicError::AnalysisFailed |
+| Unknown error | Other | MagicError::Unknown with errno |
+
+#### Async Integration Tests
+
+Testing FFI with Tokio's async runtime.
+
+```mermaid
+sequenceDiagram
+    participant Test
+    participant Tokio
+    participant BlockPool
+    participant FFI
+    
+    Test->>Tokio: spawn async task
+    Tokio->>BlockPool: spawn_blocking
+    BlockPool->>FFI: magic_buffer()
+    Note over FFI: Blocking call
+    FFI-->>BlockPool: Result
+    BlockPool-->>Tokio: Future resolves
+    Tokio-->>Test: Assert result
+```
+
+| Test Case | Verification |
+|-----------|--------------|
+| Single async call | Completes successfully |
+| 100 concurrent async calls | All complete, no race conditions |
+| Blocking doesn't block runtime | Other tasks make progress |
+| Timeout enforcement | Analysis cancelled after 30s |
+| Panic in blocking task | Runtime remains stable |
+
+#### Property-Based Tests
+
+**Test Location:** `tests/infrastructure/magic/property_tests.rs`
+
+Using `proptest` to generate random inputs.
+
+| Property | Generator | Invariant |
+|----------|-----------|-----------|
+| No panic on any input | Random byte arrays (0-100KB) | Always returns Result, never panics |
+| Valid UTF-8 output | Any input | Output is valid UTF-8 or error |
+| Deterministic results | Same input twice | Same MIME type returned |
+| Empty input handling | Empty slice | Returns result, no crash |
+| Large input handling | 100MB random data | Completes within timeout or returns timeout error |
+
+#### Miri Testing
+
+Testing for undefined behavior with Rust's interpreter.
+
+**Command:** `cargo +nightly miri test ffi`
+
+**Checks:**
+- Use-after-free detection
+- Double-free detection
+- Uninitialized memory access
+- Invalid pointer dereference
+- Data races (if using unsafe threading)
+
+**Test Cases:**
+
+| Test | Expected Miri Result |
+|------|---------------------|
+| Normal cookie lifecycle | Pass |
+| Drop during panic | Pass |
+| Concurrent access (with Mutex) | Pass |
+| String conversion | Pass |
+| NULL pointer handling | Pass |
+
+#### Valgrind Testing
+
+Testing for C-level memory issues.
+
+**Command:** `valgrind --leak-check=full --track-origins=yes ./target/debug/ffi_tests`
+
+**Checks:**
+- Memory leaks in libmagic
+- Invalid reads/writes
+- Uninitialized values
+- Use of freed memory
+
+**Test Scenarios:**
+
+| Test | Expected Valgrind Output |
+|------|-------------------------|
+| Create and destroy 1000 cookies | 0 bytes leaked |
+| Analyze 100 different files | No invalid reads/writes |
+| Error path (failed operations) | All resources freed |
+| Concurrent operations | No race conditions reported |
+
+#### Platform-Specific Tests
+
+Testing FFI behavior across different platforms.
+
+| Platform | libmagic Version | Test Focus |
+|----------|-----------------|------------|
+| Ubuntu 22.04 | 5.41 | Standard behavior |
+| Debian 12 | 5.44 | API compatibility |
+| Alpine Linux | 5.45 | musl libc compatibility |
+| macOS (CI) | Homebrew version | Darwin-specific behavior |
+
+#### Fuzzing Tests
+
+**Tool:** `cargo-fuzz`
+
+**Test Location:** `fuzz/fuzz_targets/ffi_analyze.rs`
+
+```mermaid
+graph LR
+    Fuzzer[AFL/libFuzzer] --> Generate[Generate Inputs]
+    Generate --> FFI[Call FFI Analysis]
+    FFI --> Check{Crash/Hang?}
+    Check -->|Yes| Report[Report Bug]
+    Check -->|No| Continue[Continue]
+    Continue --> Generate
+    
+    style Report fill:#ffe1e1
+    style Continue fill:#e1ffe1
+```
+
+**Fuzz Targets:**
+
+| Target | Input | Goal |
+|--------|-------|------|
+| ffi_analyze_buffer | Random byte arrays | Find crashes, hangs |
+| ffi_load_database | Random file paths | Test path handling |
+| ffi_large_input | Large files (up to 100MB) | Test resource limits |
+| ffi_malformed_data | Specially crafted malicious files | Find security issues |
+
+**Fuzzing Duration:** 24 hours per target in CI
+
+#### FFI Safety Audit Checklist
+
+Manual review checklist for FFI code safety.
+
+| Check | Requirement | Status |
+|-------|-------------|--------|
+| All FFI calls in unsafe blocks | ✓ Required | |
+| Safety comments on all unsafe | ✓ Required | |
+| NULL pointer checks | ✓ Required | |
+| Pointer lifetime documented | ✓ Required | |
+| Drop implementation correct | ✓ Required | |
+| PhantomData markers correct | ✓ Required | |
+| String conversion immediate copy | ✓ Required | |
+| No raw pointers exposed publicly | ✓ Required | |
+| Error handling comprehensive | ✓ Required | |
+| Panic safety in Drop | ✓ Required | |
+
+### 4.5. Presentation Layer Testing
 
 ```mermaid
 graph TB
@@ -303,7 +631,7 @@ graph TB
 | Symlink within sandbox | Create valid symlink | Accept and resolve |
 | Deeply nested path | Create nested directories | Accept if within sandbox |
 
-### 4.4. Presentation Layer Testing
+### 4.6. Infrastructure Layer Testing (Other)
 
 ```mermaid
 graph TB
@@ -341,6 +669,9 @@ graph TB
 | Endpoint | Scenario | Expected Status | Expected Response |
 |----------|----------|----------------|-------------------|
 | POST /v1/magic/content | Valid request with auth | 200 OK | JSON with request_id, filename, result |
+| POST /v1/magic/content | Small content (1MB) | 200 OK | Fast response, no temp file |
+| POST /v1/magic/content | Large content (50MB) | 200 OK | Success with file-based analysis |
+| POST /v1/magic/content | Max size content (100MB) | 200 OK | Success at boundary |
 | POST /v1/magic/content | Invalid filename (contains /) | 400 Bad Request | Error JSON with request_id |
 | POST /v1/magic/content | No authentication | 401 Unauthorized | Error JSON |
 | POST /v1/magic/content | Payload exceeds 100MB | 413 Payload Too Large | Error JSON |
@@ -513,6 +844,8 @@ sequenceDiagram
 | Workflow | Steps | Verification |
 |----------|-------|--------------|
 | Analyze content workflow | 1. Start server<br/>2. POST binary to /v1/magic/content<br/>3. Verify response | 200 OK with correct MIME type and request_id |
+| Large file analysis | 1. Start server<br/>2. POST 50MB file<br/>3. Monitor temp directory<br/>4. Verify cleanup | 200 OK, temp file cleaned after response |
+| Concurrent large files | 1. Start server<br/>2. POST 10 x 20MB files in parallel<br/>3. All complete | All succeed with unique request_ids |
 | Analyze path workflow | 1. Start server<br/>2. Create file in sandbox<br/>3. POST to /v1/magic/path<br/>4. Verify response | 200 OK with analysis result |
 | Health check workflow | 1. Start server<br/>2. GET /v1/ping<br/>3. Verify response | 200 OK with "pong" message |
 | Authentication failure | 1. Start server<br/>2. POST without auth<br/>3. Verify rejection | 401 Unauthorized |

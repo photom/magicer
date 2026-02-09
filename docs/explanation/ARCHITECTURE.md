@@ -344,6 +344,8 @@ classDiagram
 
 ### 4.2. Application Flow
 
+#### Standard Content Analysis
+
 ```mermaid
 sequenceDiagram
     participant Handler as HTTP Handler
@@ -366,6 +368,43 @@ sequenceDiagram
     UseCase-->>Handler: response_dto
 ```
 
+#### Large File Analysis Flow
+
+```mermaid
+sequenceDiagram
+    participant Handler
+    participant UseCase as AnalyzeContentUseCase
+    participant TempFile as TempFileHandler
+    participant Mmap as Memory Map
+    participant Repo as MagicRepository
+    
+    Handler->>UseCase: execute(large_content)
+    UseCase->>UseCase: Check size > threshold
+    
+    alt Content exceeds threshold
+        UseCase->>TempFile: create_temp_file()
+        TempFile-->>UseCase: temp_path
+        
+        loop Write in chunks
+            UseCase->>TempFile: write_chunk(buffer)
+            Note over TempFile: Configurable buffer size
+        end
+        
+        UseCase->>TempFile: flush & sync
+        UseCase->>Mmap: open_mmap(temp_path)
+        Mmap-->>UseCase: memory-mapped region
+        UseCase->>Repo: analyze_mmap(mmap_slice)
+        Repo-->>UseCase: (MimeType, description)
+        UseCase->>Mmap: close mmap
+        UseCase->>TempFile: delete temp file
+    else Content within threshold
+        UseCase->>Repo: analyze_buffer(content)
+        Repo-->>UseCase: (MimeType, description)
+    end
+    
+    UseCase-->>Handler: response_dto
+```
+
 **Use Case Orchestration:**
 
 The application layer coordinates domain operations through three primary use cases:
@@ -373,9 +412,12 @@ The application layer coordinates domain operations through three primary use ca
 1. **AnalyzeContentUseCase** (`application/use_cases/analyze_content.rs`)
    - Receives binary content and filename from handler
    - Validates content is non-empty
+   - **Large File Handling:** If content exceeds threshold, streams to temporary file
+   - Uses memory-mapped I/O for large files to reduce memory footprint
    - Delegates to MagicRepository trait
    - Constructs response DTO from domain entity
    - Applies 30-second timeout constraint
+   - Cleans up temporary files after analysis
 
 2. **AnalyzePathUseCase** (`application/use_cases/analyze_path.rs`)
    - Receives file path and filename from handler
@@ -389,7 +431,161 @@ The application layer coordinates domain operations through three primary use ca
    - Returns success immediately
    - No external dependencies
 
-### 4.3. Infrastructure Integration
+### 4.3. Large Content Handling Strategy
+
+**Problem:** Analyzing large files (10MB-100MB) in memory can cause:
+- High memory consumption under concurrent load
+- Increased garbage collection pressure
+- Potential out-of-memory conditions
+
+**Solution:** Stream large content to temporary file and use memory-mapped I/O.
+
+#### Architecture
+
+```mermaid
+graph TB
+    Content[Request Content] --> Check{Size Check}
+    
+    Check -->|< Threshold| Memory[In-Memory Analysis]
+    Check -->|> Threshold| Stream[Stream to Temp File]
+    
+    Stream --> Write[Write with Buffer]
+    Write --> Flush[Flush & Sync]
+    Flush --> Mmap[Memory Map File]
+    Mmap --> Analyze[libmagic Analysis]
+    Analyze --> Cleanup[Delete Temp File]
+    
+    Memory --> Analyze
+    
+    style Memory fill:#e1ffe1
+    style Stream fill:#fff4e1
+    style Cleanup fill:#ffe1f5
+```
+
+#### Configuration Parameters
+
+| Parameter | Config Key | Default | Purpose |
+|-----------|-----------|---------|---------|
+| **Size Threshold** | `analysis.large_file_threshold_mb` | 10 MB | Trigger point for file streaming |
+| **Write Buffer Size** | `analysis.write_buffer_size_kb` | 64 KB | Chunk size for streaming writes |
+| **Temp Directory** | `analysis.temp_dir` | `/tmp/magicer` | Location for temporary files |
+
+#### Processing Strategy
+
+**Small Content (< Threshold):**
+1. Keep entire content in memory
+2. Pass directly to libmagic via buffer API
+3. No file I/O overhead
+4. Fast path for typical requests
+
+**Large Content (≥ Threshold):**
+1. Create temporary file with unique name
+2. Stream content in configurable chunks
+3. Flush and sync to ensure data persistence
+4. Open file with memory-mapped I/O (mmap)
+5. Pass mmap slice to libmagic
+6. Close mmap and delete temporary file
+
+#### Memory-Mapped I/O Benefits
+
+```mermaid
+graph LR
+    Traditional[Traditional I/O] --> Buffer[Load to Buffer]
+    Buffer --> Memory[Full Memory Copy]
+    
+    Mmap[Memory-Mapped I/O] --> Kernel[Kernel Page Cache]
+    Kernel --> OnDemand[Load Pages On-Demand]
+    
+    Memory --> Cost[High Memory Cost]
+    OnDemand --> Efficient[Memory Efficient]
+    
+    style Cost fill:#ffe1e1
+    style Efficient fill:#e1ffe1
+```
+
+**Advantages:**
+- **Lazy Loading:** Pages loaded only when accessed
+- **Kernel Cache:** Leverages OS page cache
+- **Memory Efficiency:** No duplicate buffering
+- **Performance:** Near-native file access speed
+
+#### Temporary File Management
+
+```mermaid
+stateDiagram-v2
+    [*] --> Create: Request arrives
+    Create --> Write: Stream chunks
+    Write --> Write: Continue until complete
+    Write --> Flush: All data written
+    Flush --> Mmap: Open memory map
+    Mmap --> Analyze: libmagic reads via mmap
+    Analyze --> Close: Analysis complete
+    Close --> Delete: Cleanup
+    Delete --> [*]: Done
+    
+    Create --> Error: Creation fails
+    Write --> Error: Write fails
+    Error --> [*]: Return error
+```
+
+**Safety Requirements:**
+
+| Requirement | Implementation |
+|-------------|----------------|
+| **Unique Names** | UUID-based temp file names |
+| **Atomic Cleanup** | Drop trait ensures deletion |
+| **Panic Safety** | RAII pattern for cleanup |
+| **Permission Control** | File created with 0600 (owner only) |
+| **Directory Isolation** | Separate temp directory from sandbox |
+
+#### Error Handling
+
+| Error Scenario | Response |
+|----------------|----------|
+| Temp file creation fails | Return 500 Internal Server Error |
+| Write fails (disk full) | Return 507 Insufficient Storage |
+| Mmap fails | Fallback to buffer analysis or error |
+| Analysis timeout | Delete temp file, return 504 |
+| Cleanup fails | Log warning, continue |
+
+#### Resource Limits
+
+**Concurrent Temp Files:**
+- Maximum concurrent requests: 1000 (connection limit)
+- Maximum temp files: 1000 (one per request)
+- Disk space check: Recommended 10GB free minimum
+
+**Disk Space Management:**
+```mermaid
+graph TB
+    Request[New Request] --> Check{Disk Space?}
+    Check -->|< 1GB free| Reject[503 Service Unavailable]
+    Check -->|≥ 1GB| Process[Process Request]
+    
+    Process --> Monitor[Background Cleanup]
+    Monitor --> Orphaned{Orphaned Files?}
+    Orphaned -->|Yes| Delete[Delete old files]
+    Orphaned -->|No| Continue[Continue]
+    
+    style Reject fill:#ffe1e1
+    style Process fill:#e1ffe1
+```
+
+**Orphaned File Cleanup:**
+- Background task runs every 5 minutes
+- Deletes temp files older than 1 hour
+- Logs cleanup operations
+
+#### Implementation Location
+
+| Component | Location | Responsibility |
+|-----------|----------|----------------|
+| Use Case Logic | `application/use_cases/analyze_content.rs` | Size check, orchestration |
+| TempFileHandler | `infrastructure/filesystem/temp_file_handler.rs` | File creation, RAII cleanup |
+| Mmap Wrapper | `infrastructure/filesystem/mmap.rs` | Memory-mapped I/O abstraction |
+| Configuration | `infrastructure/config/server_config.rs` | Threshold and buffer size |
+
+### 4.4. Infrastructure Integration
 
 ```mermaid
 graph TB

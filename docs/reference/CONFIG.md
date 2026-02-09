@@ -339,6 +339,78 @@ password = "secret_password"
 
 ---
 
+## Analysis Configuration
+
+### `[analysis]`
+
+File analysis behavior settings.
+
+#### `analysis.large_file_threshold_mb`
+
+**Type:** Unsigned integer (u64)  
+**Default:** `10`  
+**Unit:** Megabytes  
+**Description:** Size threshold above which content is streamed to temporary file instead of analyzed in memory.
+
+**Valid Range:** 1 - 100  
+**Purpose:** Reduce memory consumption for large file analysis.
+
+**Trade-offs:**
+- **Lower values** - Less memory usage, more disk I/O
+- **Higher values** - More memory usage, less disk I/O
+
+**Example:**
+```toml
+[analysis]
+large_file_threshold_mb = 10
+```
+
+#### `analysis.write_buffer_size_kb`
+
+**Type:** Unsigned integer (u64)  
+**Default:** `64`  
+**Unit:** Kilobytes  
+**Description:** Buffer size for streaming content to temporary files.
+
+**Valid Range:** 4 - 1024  
+**Purpose:** Control memory vs I/O performance trade-off when writing temporary files.
+
+**Recommended:**
+- Fast disks (SSD): 64-128 KB
+- Slow disks (HDD): 256-512 KB
+- Network storage: 128-256 KB
+
+**Example:**
+```toml
+[analysis]
+write_buffer_size_kb = 64
+```
+
+#### `analysis.temp_dir`
+
+**Type:** String (absolute path)  
+**Default:** `/tmp/magicer`  
+**Description:** Directory for temporary files during large content analysis.
+
+**Requirements:**
+- Must be an absolute path
+- Directory must exist or be creatable
+- Server process must have write permissions
+- Should be on a filesystem with sufficient space
+
+**Recommendations:**
+- Use tmpfs for performance (if sufficient RAM)
+- Ensure at least 10GB free space for production
+- Separate from main data directories
+
+**Example:**
+```toml
+[analysis]
+temp_dir = "/tmp/magicer"
+```
+
+---
+
 ## Magic Database Configuration
 
 ### `[magic]`
@@ -454,6 +526,11 @@ max_body_size_mb = 100
 max_uri_length = 8192
 max_header_size = 16384
 
+[analysis]
+large_file_threshold_mb = 10
+write_buffer_size_kb = 64
+temp_dir = "/tmp/magicer"
+
 [sandbox]
 base_dir = "/var/lib/magicer/files"
 
@@ -480,6 +557,11 @@ max_connections = 100
 [server.timeouts]
 read_timeout_secs = 120
 analysis_timeout_secs = 60
+
+[analysis]
+large_file_threshold_mb = 5  # Lower threshold for testing
+write_buffer_size_kb = 32
+temp_dir = "./tmp"
 
 [sandbox]
 base_dir = "./test-files"
@@ -510,6 +592,11 @@ keepalive_secs = 60
 
 [server.limits]
 max_body_size_mb = 100
+
+[analysis]
+large_file_threshold_mb = 10
+write_buffer_size_kb = 128  # Optimized for SSD
+temp_dir = "/var/tmp/magicer"
 
 [sandbox]
 base_dir = "/srv/magicer/files"
