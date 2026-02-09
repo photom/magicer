@@ -36,19 +36,18 @@ Status: Not yet created
 
 ## Navigation
 
-- Main index: `docs/README.md`
-- Navigation guide: `docs/DOCUMENTATION_MAP.md`
 - Project overview: `README.md`
+- Documentation map: `docs/DOCUMENTATION_MAP.md`
 
 ## Changes Made
 
 **Deleted:**
 - Category README files (tutorials, how-to-guides, reference, explanation)
 - Verbose organization documents
+- Redundant docs/README.md (consolidated into main README.md)
 
 **Simplified:**
-- Main documentation index
-- Documentation map
+- Documentation map (docs/DOCUMENTATION_MAP.md)
 - Project README documentation section
 
 **Result:** Clean, concise documentation structure following Diátaxis principles.

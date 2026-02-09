@@ -23,7 +23,6 @@ docs/
 ### Quick Access
 
 - 🗺️ **[Documentation Map](docs/DOCUMENTATION_MAP.md)** - Navigate by role or task
-- 📋 **[Documentation Index](docs/README.md)** - Browse all documents
 
 ### Key Documents
 
@@ -48,15 +47,15 @@ docs/
 **Authentication:** HTTP Basic Auth
 
 **API Documentation:**
-- **Specification:** `api/v1/openapi.yaml`
-- **Interactive Docs:** Automatically generated and hosted on GitHub Pages
+- **Specification:** [api/v1/openapi.yaml](api/v1/openapi.yaml)
+- **Interactive Docs:** https://photom.github.io/magicer/
 
 ### Automated API Documentation
 
 HTML documentation is automatically generated from the OpenAPI spec via GitHub Actions:
 
+- **URL:** https://photom.github.io/magicer/
 - **Trigger:** Push to `main` branch when `openapi.yaml` changes
-- **Output:** Static HTML hosted on GitHub Pages
 - **Validation:** Lints OpenAPI spec before generation
 
 **Manual Generation:**

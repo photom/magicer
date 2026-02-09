@@ -12,13 +12,13 @@ graph TB
     Start -->|Understand why| Understand[Understanding Phase]
     
     Learn --> T1[📖 Tutorials<br/>Coming soon]
-    Learn --> A1[📄 OpenAPI Spec<br/>api/v1/openapi.yaml]
+    Learn --> A1[📄 API Documentation<br/>photom.github.io/magicer/]
     
     Task --> H1[🛠️ Deployment Guide<br/>how-to-guides/DEPLOYMENT.md]
     Task --> H2[🔜 Operations Guide<br/>Suggested]
     Task --> H3[🔜 Development Guide<br/>Suggested]
     
-    Lookup --> R1[📚 API Specification<br/>api/v1/openapi.yaml]
+    Lookup --> R1[📚 API Documentation<br/>photom.github.io/magicer/]
     Lookup --> R2[📚 Server Specification<br/>reference/HTTP_SERVER.md]
     Lookup --> R3[📚 Project Structure<br/>reference/PROJECT_STRUCTURE.md]
     Lookup --> R4[📚 Testing Strategy<br/>reference/TESTING_STRATEGY.md]
@@ -47,10 +47,10 @@ graph TB
 
 | Role | Primary Documents |
 |------|------------------|
-| **API User** | [OpenAPI Spec](../api/v1/openapi.yaml) |
+| **API User** | [API Documentation](https://photom.github.io/magicer/) |
 | **DevOps/SRE** | [Deployment](how-to-guides/DEPLOYMENT.md) → [HTTP Server](reference/HTTP_SERVER.md) → [Architecture](explanation/ARCHITECTURE.md) |
 | **Developer** | [Project Structure](reference/PROJECT_STRUCTURE.md) → [Architecture](explanation/ARCHITECTURE.md) → [Testing](reference/TESTING_STRATEGY.md) |
-| **Security Auditor** | [OpenAPI](../api/v1/openapi.yaml) → [Architecture](explanation/ARCHITECTURE.md) → [HTTP Server](reference/HTTP_SERVER.md) |
+| **Security Auditor** | [API Docs](https://photom.github.io/magicer/) → [Architecture](explanation/ARCHITECTURE.md) → [HTTP Server](reference/HTTP_SERVER.md) |
 
 ## By Task
 
@@ -58,7 +58,7 @@ graph TB
 |------|----------|
 | Deploy the server | [DEPLOYMENT.md](how-to-guides/DEPLOYMENT.md) |
 | Understand architecture | [ARCHITECTURE.md](explanation/ARCHITECTURE.md) |
-| Look up API endpoints | [openapi.yaml](../api/v1/openapi.yaml) |
+| Look up API endpoints | [API Documentation](https://photom.github.io/magicer/) |
 | Find server limits | [HTTP_SERVER.md](reference/HTTP_SERVER.md) |
 | Understand codebase | [PROJECT_STRUCTURE.md](reference/PROJECT_STRUCTURE.md) |
 | Write tests | [TESTING_STRATEGY.md](reference/TESTING_STRATEGY.md) |
@@ -76,7 +76,7 @@ graph TB
 
 ### 📚 Reference (Information-Oriented)
 
-- [openapi.yaml](../api/v1/openapi.yaml)
+- [API Documentation](https://photom.github.io/magicer/) ([source](../api/v1/openapi.yaml))
 - [HTTP_SERVER.md](reference/HTTP_SERVER.md)
 - [PROJECT_STRUCTURE.md](reference/PROJECT_STRUCTURE.md)
 - [TESTING_STRATEGY.md](reference/TESTING_STRATEGY.md)
