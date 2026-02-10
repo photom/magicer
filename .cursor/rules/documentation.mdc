@@ -13,5 +13,5 @@ alwaysApply: true
 - Documentation must comply with Diátaxis
 - Documentations are located in docs.
 - Explanation sentences must describe concisely.
-- Do not write code in documents
+- Do not write programming codes in documents
 - Use mermaid diagram in order to describe design

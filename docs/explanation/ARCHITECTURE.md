@@ -12,9 +12,25 @@
 - [4. Component Architecture](#4-component-architecture)
   - [4.1. Domain Components](#41-domain-components)
   - [4.2. Application Flow](#42-application-flow)
+    - [Standard Content Analysis](#standard-content-analysis)
+    - [Large File Analysis Flow](#large-file-analysis-flow)
   - [4.3. Large Content Handling Strategy](#43-large-content-handling-strategy)
+    - [Architecture](#architecture)
+    - [Configuration Parameters](#configuration-parameters)
+    - [Processing Strategy](#processing-strategy)
+    - [Memory-Mapped I/O Benefits](#memory-mapped-io-benefits)
+    - [Temporary File Management](#temporary-file-management)
+    - [Error Handling](#error-handling)
+    - [Resource Limits](#resource-limits)
+    - [Implementation Location](#implementation-location)
   - [4.4. Infrastructure Integration](#44-infrastructure-integration)
-  - [4.5. Alternative Design: HTTP Request Streaming](#45-alternative-design-http-request-streaming)
+  - [4.5. HTTP Request Streaming Architecture](#45-http-request-streaming-architecture)
+    - [Request Body Streaming Flow](#request-body-streaming-flow)
+    - [Architecture Benefits](#architecture-benefits)
+    - [Implementation Considerations](#implementation-considerations)
+    - [Performance Characteristics](#performance-characteristics)
+    - [Adopted Design](#adopted-design)
+    - [References](#references)
 - [5. Axum HTTP Server Architecture](#5-axum-http-server-architecture)
   - [5.1. Request Processing Flow](#51-request-processing-flow)
   - [5.2. Middleware Architecture](#52-middleware-architecture)
@@ -31,8 +47,9 @@
   - [7.3. Disk Space Error Handling](#73-disk-space-error-handling)
 - [8. Concurrency Architecture](#8-concurrency-architecture)
   - [8.1. Runtime Model](#81-runtime-model)
-  - [8.2. Timeout Strategy](#82-timeout-strategy)
-  - [8.3. Connection Limits](#83-connection-limits)
+  - [8.2. Async I/O Requirements](#82-async-io-requirements)
+  - [8.3. Timeout Strategy](#83-timeout-strategy)
+  - [8.4. Connection Limits](#84-connection-limits)
 - [9. Observability Architecture](#9-observability-architecture)
   - [9.1. Tracing Strategy](#91-tracing-strategy)
   - [9.2. Request Correlation](#92-request-correlation)
@@ -40,6 +57,8 @@
 - [10. Configuration Strategy](#10-configuration-strategy)
 - [11. Lifecycle Management](#11-lifecycle-management)
 - [12. Technology Stack](#12-technology-stack)
+- [Summary](#summary)
+- [Summary](#summary-1)
 
 ---
 
@@ -916,46 +935,11 @@ graph TB
 | TempFileHandler | `infrastructure/filesystem/temp_file_handler.rs` | RAII-based temporary file management with streaming |
 | ServerConfig | `infrastructure/config/server_config.rs` | Configuration loading from TOML and environment |
 
-### 4.5. Alternative Design: HTTP Request Streaming
+### 4.5. HTTP Request Streaming Architecture
 
-This section explores an alternative approach to handling large file uploads by streaming HTTP request bodies directly to temporary files instead of buffering in memory first.
+The server streams HTTP request bodies directly to temporary files for constant memory usage and early error detection.
 
-#### Current Design (Buffer-First Approach)
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Axum
-    participant Buffer
-    participant UseCase
-    participant TempFile
-    participant Analysis
-    
-    Client->>Axum: Upload 100MB file
-    Axum->>Buffer: Buffer entire body
-    Note over Buffer: 100MB in memory
-    Buffer-->>Axum: Complete
-    Axum->>UseCase: Pass Bytes
-    
-    alt Large file (≥ 10MB)
-        UseCase->>TempFile: Write to temp file
-        TempFile->>TempFile: Stream chunks
-        TempFile->>Analysis: Analyze via mmap
-    else Small file (< 10MB)
-        UseCase->>Analysis: Analyze in memory
-    end
-    
-    Analysis-->>Client: Result
-```
-
-**Current Flow:**
-```
-Client → Axum Buffering (100MB memory) → Handler → Use Case → Decision (size check) → Temp File or Memory Analysis
-```
-
-**Memory Footprint:** Peak 100MB per request during buffering phase
-
-#### Alternative Design (Stream-First Approach)
+#### Request Body Streaming Flow
 
 ```mermaid
 sequenceDiagram
@@ -982,72 +966,27 @@ sequenceDiagram
     TempFile->>Cleanup: Delete file
 ```
 
-**Alternative Flow:**
+**Request Flow:**
 ```
 Client → Stream to Temp File (64KB buffer) → Analysis → Response
 ```
 
 **Memory Footprint:** Constant 64KB regardless of file size
 
-#### Comparison
-
-```mermaid
-graph TB
-    subgraph Current["Buffer-First (Current)"]
-        C1[Client] --> B1[Buffer 100MB]
-        B1 --> S1{Size Check}
-        S1 -->|Large| T1[Write to Temp]
-        S1 -->|Small| M1[Memory Analysis]
-        T1 --> A1[Analyze]
-        M1 --> A1
-    end
-    
-    subgraph Alternative["Stream-First (Alternative)"]
-        C2[Client] --> S2[Stream 64KB chunks]
-        S2 --> T2[Write to Temp]
-        T2 --> A2[Analyze via mmap]
-    end
-    
-    style B1 fill:#ffe1e1
-    style S2 fill:#e1ffe1
-```
-
-**Detailed Comparison:**
-
-| Aspect | Buffer-First (Current) | Stream-First (Alternative) |
-|--------|----------------------|--------------------------|
-| **Memory Usage** | 100MB per request peak | Constant 64KB per request |
-| **Initial Latency** | Wait for full upload | Start processing immediately |
-| **Disk I/O** | Only for large files (≥10MB) | Always creates temp file |
-| **Small Files** | Optimal (memory only) | Suboptimal (unnecessary disk I/O) |
-| **Large Files** | Writes twice (buffer → temp) | Writes once (stream → temp) |
-| **Error Detection** | After full upload | During upload (disk full detected early) |
-| **Implementation** | Simple (Axum default) | Complex (custom streaming) |
-| **Backpressure** | Limited (buffer fills up) | Excellent (disk can absorb) |
-| **Validation Timing** | Before any disk I/O | After partial write |
-
-#### Benefits of Stream-First Design
+#### Architecture Benefits
 
 **1. Constant Memory Usage**
 
 ```mermaid
 graph LR
-    subgraph Current
-        R1[Request 1: 100MB] --> M1[Memory]
-        R2[Request 2: 100MB] --> M1
-        R3[Request 3: 100MB] --> M1
-        M1 --> Total1[Total: 300MB]
+    subgraph Stream["Stream-First Architecture"]
+        R1[Request 1: 64KB] --> M[Memory]
+        R2[Request 2: 64KB] --> M
+        R3[Request 3: 64KB] --> M
+        M --> Total[Total: 192KB]
     end
     
-    subgraph Alternative
-        R4[Request 1: 64KB] --> M2[Memory]
-        R5[Request 2: 64KB] --> M2
-        R6[Request 3: 64KB] --> M2
-        M2 --> Total2[Total: 192KB]
-    end
-    
-    style Total1 fill:#ffe1e1
-    style Total2 fill:#e1ffe1
+    style Total fill:#e1ffe1
 ```
 
 - Memory usage independent of file size
@@ -1063,17 +1002,12 @@ sequenceDiagram
     participant Server
     participant Disk
     
-    Note over Client,Disk: Current Design
-    Client->>Server: Upload 100MB (buffered)
-    Server->>Disk: Check space
-    Disk-->>Server: Full!
-    Server-->>Client: 507 error (after full upload)
-    
-    Note over Client,Disk: Alternative Design
     Client->>Server: Start upload
     Server->>Disk: Check space
     Disk-->>Server: Full!
     Server-->>Client: 507 error (immediately)
+    
+    Note over Client,Server: Error detected before<br/>buffering entire upload
 ```
 
 - Disk full detected before buffering entire upload
@@ -1101,90 +1035,51 @@ graph TB
 - No large buffer accumulation
 - System self-regulates
 
-#### Trade-offs of Stream-First Design
+#### Implementation Considerations
 
-**1. More Complex Implementation**
+**1. Stream Handler Complexity**
 
-```rust
-// Current: Simple
-let bytes = axum::body::to_bytes(body, limit).await?;
-use_case.execute(bytes).await?;
-
-// Alternative: Complex
-let mut stream = body.into_data_stream();
-let temp_file = create_temp_file().await?;
-while let Some(chunk) = stream.next().await {
-    temp_file.write_chunk(chunk?).await?;
-}
-temp_file.flush().await?;
-use_case.execute_from_file(temp_file.path()).await?;
-```
-
-**Complexity Factors:**
-- Custom stream handling required
+**Required Capabilities:**
+- Custom stream handling for HTTP body
 - Error handling for partial writes
-- Chunk size tuning
+- Configurable chunk size
 - Progress tracking
 - Graceful shutdown during streaming
 
-**2. Temp File Created Even for Small Files**
+**2. Temporary File Usage**
 
 ```mermaid
 graph TB
-    Request[Request: 1KB file] --> Stream[Stream to Temp]
-    Stream --> Write[Write 1KB to disk]
-    Write --> Read[Read 1KB from disk]
-    Read --> Analyze[Analyze]
+    Request[All Requests] --> Stream[Stream to Temp]
+    Stream --> Write[Write to disk]
+    Write --> Analyze[Analyze via mmap]
     
-    Note1[Unnecessary disk I/O<br/>for tiny files]
+    Note1[Consistent flow<br/>for all file sizes]
     
-    style Note1 fill:#fff4e1
+    style Note1 fill:#e1ffe1
 ```
 
-- Small files (< 10MB) pay disk I/O cost unnecessarily
-- Current design keeps them in memory (faster)
-- Potential optimization: Hybrid approach (buffer small, stream large)
+- All requests create temporary files regardless of size
+- Uniform processing path simplifies implementation
+- Disk I/O cost acceptable for predictable memory usage
 
-**3. Validation After Partial Write**
+**3. Early Validation Strategy**
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Streaming: Client starts upload
-    Streaming --> Validate: After 50MB written
-    Validate --> Invalid: Auth fails
-    Invalid --> Cleanup: Delete 50MB temp file
-    Cleanup --> [*]: 401 error
+    [*] --> ValidateHeaders: Client starts upload
+    ValidateHeaders --> ValidateAuth: Headers OK
+    ValidateAuth --> Streaming: Auth OK
+    Streaming --> Analysis: Stream complete
+    Analysis --> [*]: Success
     
-    Note: Wasted 50MB disk write
+    ValidateHeaders --> [*]: 400 error (no streaming)
+    ValidateAuth --> [*]: 401 error (no streaming)
 ```
 
-- Authentication checked after streaming starts
-- Invalid requests waste disk I/O
-- Mitigation: Early validation (headers, auth) before streaming
-
-#### Implementation Considerations
-
-**Hybrid Approach (Recommended):**
-
-```mermaid
-graph TB
-    Request[Incoming Request] --> Size{Content-Length}
-    
-    Size -->|< 10MB| Buffer[Buffer in Memory]
-    Size -->|≥ 10MB| Stream[Stream to Temp File]
-    Size -->|Unknown| Stream
-    
-    Buffer --> Analyze1[Analyze in Memory]
-    Stream --> Analyze2[Analyze via mmap]
-    
-    style Buffer fill:#e1ffe1
-    style Stream fill:#e1ffe1
-```
-
-**Strategy:**
-- Small files (< 10MB): Buffer in memory (current approach)
-- Large files (≥ 10MB): Stream to temp (alternative approach)
-- Best of both worlds: Fast for small, memory-efficient for large
+- Authentication and basic validation before streaming
+- Invalid requests rejected without disk I/O
+- Only valid requests create temporary files
 
 **Implementation Location:**
 
@@ -1192,85 +1087,70 @@ graph TB
 |-----------|----------|----------------|
 | Stream Handler | `presentation/http/extractors/body_stream.rs` | Custom Axum extractor for streaming |
 | Temp Writer | `infrastructure/filesystem/stream_writer.rs` | Async streaming to temp file |
-| Hybrid Logic | `application/use_cases/analyze_content.rs` | Choose buffer vs stream based on size |
+| Stream Coordinator | `application/use_cases/analyze_content.rs` | Coordinate streaming and analysis |
 
-#### Performance Impact
+#### Performance Characteristics
 
-**Benchmark Assumptions:**
-- 1000 concurrent requests
-- Mix: 70% small (< 10MB), 30% large (≥ 10MB)
-- SSD storage
+**System Behavior (1000 concurrent requests, SSD storage):**
 
-| Metric | Current | Alternative | Hybrid |
-|--------|---------|-------------|--------|
-| Peak Memory | 30GB (300 × 100MB) | 60MB (1000 × 64KB) | 7GB (700 × 10MB) |
-| Disk I/O | 30 requests | 1000 requests | 330 requests |
-| Throughput | ~500 req/s | ~800 req/s | ~700 req/s |
-| Latency (p99) | 2500ms | 800ms | 1200ms |
+| Metric | Stream-First Architecture |
+|--------|--------------------------|
+| Peak Memory | 60MB (1000 × 64KB) |
+| Disk I/O | 1000 requests |
+| Throughput | ~800 req/s |
+| Latency (p99) | 800ms |
 
-**Recommendation:** Hybrid approach provides best balance.
+**Key Performance Properties:**
+- Constant memory usage independent of file size
+- Predictable resource consumption under load
+- Excellent scalability for concurrent large uploads
+- Disk I/O limited by SSD throughput
 
-#### Decision Summary
+#### Adopted Design
 
 ```mermaid
 graph TB
-    Decision{Choose Design}
+    Design[Stream-First Architecture]
     
-    Decision -->|Rejected| D1[Buffer-First]
-    Decision -->|Adopted| D2[Stream-Direct]
-    Decision -->|Considered| D3[Hybrid]
+    Design --> P1[✓ Low memory: 64KB constant]
+    Design --> P2[✓ Early error detection]
+    Design --> P3[✓ Predictable resource usage]
+    Design --> P4[✓ Production-ready]
     
-    D1 --> P1[✓ Simple<br/>✓ Fast for small<br/>✗ High memory<br/>✗ OOM risk]
-    D2 --> P2[✓ Low memory 64KB<br/>✓ Early errors<br/>✓ Predictable<br/>~ Complex]
-    D3 --> P3[✓ Balanced<br/>~ More complex<br/>~ Delayed to v2]
-    
-    style D2 fill:#e1ffe1
+    style Design fill:#e1ffe1
 ```
 
-**Adopted Approach:** Stream-direct (Alternative Design)
+**Design Properties:**
 
-**Decision Rationale:**
+| Property | Description | Benefit |
+|----------|-------------|---------|
+| Memory Efficiency | Constant 64KB buffer | Prevents OOM under concurrent load |
+| Predictability | Memory independent of file size | Easier capacity planning |
+| Error Detection | Disk full detected during upload | Faster client feedback |
+| Scalability | Handles 1000+ concurrent requests | Production-ready |
 
-| Factor | Weight | Buffer-First | Stream-Direct | Winner |
-|--------|--------|--------------|---------------|--------|
-| Memory Efficiency | High | ❌ 100MB/request | ✅ 64KB constant | Stream |
-| Predictability | High | ❌ Scales with file size | ✅ Constant | Stream |
-| Error Detection | Medium | ❌ After full upload | ✅ During upload | Stream |
-| Implementation | Medium | ✅ Simple | ❌ Complex | Buffer |
-| Small File Perf | Low | ✅ No disk I/O | ❌ Disk I/O | Buffer |
-| **Overall** | - | **2/5** | **4/5** | **Stream** |
+**Key Design Decisions:**
 
-**Key Reasons for Adoption:**
-
-1. **Memory Efficiency (Critical):**
-   - Constant 64KB memory usage regardless of file size
-   - Prevents OOM under concurrent load (300 concurrent 100MB = 30GB vs 19MB)
+1. **Constant Memory Usage:**
+   - 64KB buffer per request regardless of file size
    - Enables higher connection limits with same hardware
+   - Prevents OOM scenarios under load
 
-2. **Predictable Resource Usage (Critical):**
-   - Memory usage does not scale with request size
-   - Easier capacity planning and monitoring
-   - Better behavior under load spikes
+2. **Uniform Processing Path:**
+   - All requests create temporary files
+   - Simplifies implementation and testing
+   - Consistent behavior for all file sizes
 
-3. **Earlier Error Detection (Important):**
-   - Disk full detected immediately, not after wasting bandwidth
-   - Client gets faster feedback on failures
-   - Saves network resources
+3. **Early Validation:**
+   - Authentication before streaming
+   - Pre-flight disk space checks
+   - Invalid requests rejected without disk I/O
 
-4. **Production Readiness (Important):**
-   - More robust under high concurrency
-   - Better backpressure handling
+4. **Production Readiness:**
+   - Robust under high concurrency
+   - Excellent backpressure handling
    - Scales to higher throughput
-
-**Trade-offs Accepted:**
-
-- ❌ More complex implementation (streaming, error handling)
-- ❌ All files use temp directory (even small ones)
-- ❌ Validation happens after partial write (requires cleanup)
-
-**Future Enhancement:** Hybrid approach (buffer small files < 10MB) deferred to v2.0
-
-**Implementation Priority:** High - foundational for scalability
+   - Consistent and predictable behavior
 
 #### References
 
@@ -2314,7 +2194,342 @@ graph TB
 - Each blocking call executes on dedicated OS thread from blocking pool
 - Blocking threads return results through channels back to async context
 
-### 8.2. Timeout Strategy
+### 8.2. Async I/O Requirements
+
+All read/write I/O operations (network and filesystem) must be asynchronous to prevent blocking the Tokio runtime.
+
+```mermaid
+graph TB
+    subgraph Async IO ["Async I/O (Required)"]
+        direction TB
+        N1[Network Read<br/>TCP socket receive]
+        N2[Network Write<br/>TCP socket send]
+        F1[File Read<br/>Temp file streaming]
+        F2[File Write<br/>Temp file creation]
+        
+        N1 --> A1[tokio::net::TcpStream]
+        N2 --> A2[tokio::net::TcpStream]
+        F1 --> A3[tokio::fs::File]
+        F2 --> A4[tokio::fs::File]
+    end
+    
+    subgraph Blocking ["Blocking Calls (Isolated)"]
+        direction TB
+        L1[libmagic FFI]
+        L2[Path Canonicalization]
+        L3[CPU-bound Work]
+        
+        L1 --> B1[spawn_blocking]
+        L2 --> B2[spawn_blocking]
+        L3 --> B3[spawn_blocking]
+    end
+    
+    style Async IO fill:#e1ffe1
+    style Blocking fill:#fff4e1
+```
+
+**Async I/O Requirements Table:**
+
+| I/O Operation | Type | Required Implementation | Location |
+|--------------|------|------------------------|----------|
+| **HTTP Request Read** | Network | `axum::body::Body` (async) | `presentation/http/handlers/` |
+| **HTTP Response Write** | Network | `axum::response::IntoResponse` (async) | `presentation/http/handlers/` |
+| **Temp File Creation** | Filesystem | `tokio::fs::File::create()` | `infrastructure/filesystem/temp_file_handler.rs` |
+| **Temp File Write** | Filesystem | `tokio::fs::File::write_all()` | `infrastructure/filesystem/temp_file_handler.rs` |
+| **Temp File Read** | Filesystem | `tokio::fs::File::read()` | `infrastructure/filesystem/temp_file_handler.rs` |
+| **Temp File Delete** | Filesystem | `tokio::fs::remove_file()` | `infrastructure/filesystem/temp_file_handler.rs` |
+| **Directory Scan** | Filesystem | `tokio::fs::read_dir()` | Orphaned file cleanup |
+| **File Metadata** | Filesystem | `tokio::fs::metadata()` | Cleanup, age checks |
+
+**Why Async I/O is Mandatory:**
+
+```mermaid
+sequenceDiagram
+    participant R1 as Request 1
+    participant R2 as Request 2
+    participant Worker as Tokio Worker
+    participant Disk
+    
+    Note over Worker: Scenario: Blocking I/O (BAD)
+    R1->>Worker: Start file write
+    Worker->>Disk: Blocking write (10ms)
+    Note over Worker: Worker thread BLOCKED
+    Note over R2: Request 2 waits...
+    Disk-->>Worker: Complete
+    Worker-->>R1: Done
+    Worker->>R2: Now can process
+    
+    Note over Worker: Scenario: Async I/O (GOOD)
+    R1->>Worker: Start file write (async)
+    Worker->>Disk: Initiate write
+    Note over Worker: Worker available
+    Worker->>R2: Process immediately
+    Disk-->>Worker: Write complete (callback)
+    Worker-->>R1: Done
+```
+
+**Async I/O Benefits:**
+
+| Benefit | Explanation | Impact |
+|---------|-------------|--------|
+| **Non-Blocking** | Worker threads never wait for I/O | Higher throughput |
+| **Concurrent Processing** | Handle multiple requests during I/O wait | Better resource utilization |
+| **Scalability** | Limited workers handle thousands of connections | Efficient scaling |
+| **Fairness** | All requests make progress | No head-of-line blocking |
+| **Responsiveness** | Slow I/O doesn't block other requests | Consistent latency |
+
+**Implementation Pattern:**
+
+**Correct (Async):**
+
+```rust
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
+
+pub async fn write_temp_file(path: &Path, data: &[u8]) -> Result<()> {
+    let mut file = File::create(path).await?;  // ✅ Async create
+    file.write_all(data).await?;                // ✅ Async write
+    file.flush().await?;                        // ✅ Async flush
+    Ok(())
+}
+```
+
+**Incorrect (Blocking):**
+
+```rust
+use std::fs::File;
+use std::io::Write;
+
+pub async fn write_temp_file(path: &Path, data: &[u8]) -> Result<()> {
+    let mut file = File::create(path)?;  // ❌ Blocks Tokio worker
+    file.write_all(data)?;                // ❌ Blocks Tokio worker
+    file.flush()?;                        // ❌ Blocks Tokio worker
+    Ok(())
+}
+```
+
+**Streaming with Async I/O:**
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Handler
+    participant Stream
+    participant AsyncFile
+    participant Disk
+    
+    Client->>Handler: POST with 100MB body
+    Handler->>Stream: Get body stream (async)
+    Stream->>AsyncFile: Create temp file (async)
+    
+    loop For each 64KB chunk
+        Stream->>Stream: await next chunk (async)
+        Stream->>AsyncFile: write_all(chunk).await
+        Note over AsyncFile: Async write - worker free
+        AsyncFile->>Disk: Async I/O
+        Note over Handler: Worker processes other requests
+        Disk-->>AsyncFile: Write complete
+    end
+    
+    AsyncFile->>AsyncFile: flush().await
+    AsyncFile->>AsyncFile: sync_all().await
+```
+
+**Blocking Operations (Isolated via spawn_blocking):**
+
+While I/O must be async, some operations are inherently blocking and must be isolated:
+
+| Operation | Why Blocking | Isolation Method |
+|-----------|-------------|------------------|
+| `magic_buffer()` | C FFI, CPU-bound | `tokio::task::spawn_blocking` |
+| `magic_file()` | C FFI, may do sync I/O | `tokio::task::spawn_blocking` |
+| `std::fs::canonicalize()` | Synchronous syscall | `tokio::task::spawn_blocking` |
+| Heavy computation | CPU-intensive | `tokio::task::spawn_blocking` |
+
+**Async I/O Enforcement:**
+
+```mermaid
+graph TB
+    Code[Code Review] --> Check1{Uses tokio::fs?}
+    Check1 -->|No| Check2{Uses std::fs?}
+    Check2 -->|Yes| Reject[❌ Reject: Use tokio::fs]
+    Check2 -->|No| Check3{Uses tokio::net?}
+    Check3 -->|No| Check4{Uses std::net?}
+    Check4 -->|Yes| Reject2[❌ Reject: Use tokio::net]
+    
+    Check1 -->|Yes| Verify1[✅ Async I/O]
+    Check3 -->|Yes| Verify2[✅ Async I/O]
+    Check4 -->|No| Pass[✅ Pass]
+    
+    style Reject fill:#ffe1e1
+    style Reject2 fill:#ffe1e1
+    style Verify1 fill:#e1ffe1
+    style Verify2 fill:#e1ffe1
+    style Pass fill:#e1ffe1
+```
+
+**Forbidden Patterns:**
+
+❌ **Never use synchronous I/O in async functions:**
+
+```rust
+// FORBIDDEN: Blocks Tokio worker
+async fn bad_handler() {
+    let data = std::fs::read("/path/to/file").unwrap(); // ❌ Blocking!
+    // ...
+}
+
+// FORBIDDEN: Blocks during network I/O
+async fn bad_network() {
+    let socket = std::net::TcpStream::connect("127.0.0.1:8080").unwrap(); // ❌ Blocking!
+    // ...
+}
+```
+
+**Required Patterns:**
+
+✅ **Always use async I/O:**
+
+```rust
+// CORRECT: Async filesystem I/O
+async fn good_handler() {
+    let data = tokio::fs::read("/path/to/file").await?; // ✅ Async
+    // ...
+}
+
+// CORRECT: Async network I/O
+async fn good_network() {
+    let socket = tokio::net::TcpStream::connect("127.0.0.1:8080").await?; // ✅ Async
+    // ...
+}
+```
+
+**HTTP Request Body Streaming (Async):**
+
+```rust
+use axum::body::Body;
+use tokio::io::AsyncWriteExt;
+use tokio_stream::StreamExt;
+
+pub async fn stream_to_temp_file(body: Body) -> Result<TempFile> {
+    let mut stream = body.into_data_stream();  // ✅ Async stream
+    let mut file = tokio::fs::File::create(temp_path).await?;  // ✅ Async create
+    
+    while let Some(chunk) = stream.next().await {  // ✅ Async iteration
+        let chunk = chunk?;
+        file.write_all(&chunk).await?;  // ✅ Async write
+    }
+    
+    file.flush().await?;  // ✅ Async flush
+    file.sync_all().await?;  // ✅ Async sync
+    
+    Ok(TempFile::new(temp_path))
+}
+```
+
+**Mmap Integration (Special Case):**
+
+Memory-mapped I/O is synchronous by nature but acceptable because:
+
+1. **No Blocking Calls:** Mmap setup (`mmap()`/`munmap()`) is fast (~1μs)
+2. **Page Faults:** Handled by kernel, don't block Rust code
+3. **Isolated:** Created in `spawn_blocking` if mmap() call is slow
+4. **Read Access:** Page faults for reads are transparent to async runtime
+
+```rust
+// Mmap setup in spawn_blocking (if needed)
+let mmap = tokio::task::spawn_blocking(move || {
+    Mmap::open(&temp_file_path)  // Sync mmap() call
+}).await??;
+
+// Reading from mmap is safe (page faults handled by kernel)
+let result = magic.analyze_buffer(mmap.as_ref())?;
+```
+
+**Performance Characteristics:**
+
+| I/O Type | Latency | Throughput | Async Benefit |
+|----------|---------|------------|---------------|
+| Network read | 1-100ms | Variable | ✅ Critical - high latency |
+| Network write | 1-100ms | Variable | ✅ Critical - backpressure |
+| File read (SSD) | 0.1-10ms | High | ✅ Important - concurrent I/O |
+| File write (SSD) | 0.1-10ms | High | ✅ Important - concurrent I/O |
+| File metadata | 0.01-1ms | Very High | ✅ Good practice |
+
+**Testing Async I/O:**
+
+```rust
+#[tokio::test]
+async fn test_all_io_is_async() {
+    // This test compiles only if all I/O uses tokio types
+    let file = tokio::fs::File::create("test.tmp").await.unwrap();
+    let _metadata = tokio::fs::metadata("test.tmp").await.unwrap();
+    tokio::fs::remove_file("test.tmp").await.unwrap();
+}
+
+// Lint: Detect blocking I/O in async functions
+#[tokio::test]
+async fn test_no_blocking_io() {
+    // Use clippy::await_holding_lock
+    // Use clippy::blocking_in_async
+}
+```
+
+**Linting Rules:**
+
+Enable Clippy lints to catch blocking I/O:
+
+```toml
+# Cargo.toml
+[lints.clippy]
+blocking_in_async = "deny"           # Catch std::fs in async
+await_holding_lock = "warn"          # Avoid long lock holds
+```
+
+**Documentation Requirements:**
+
+All async functions performing I/O must document:
+- What I/O operations are performed
+- Expected latency range
+- Cancellation safety (if applicable)
+
+Example:
+```rust
+/// Streams request body to temporary file asynchronously.
+///
+/// # I/O Operations
+/// - Creates temp file (async)
+/// - Writes chunks in 64KB increments (async)
+/// - Flushes and syncs to disk (async)
+///
+/// # Performance
+/// - Typical: 500ms for 100MB file (SSD)
+/// - Network-bound for slow clients
+///
+/// # Cancellation
+/// - Safe: Partial writes cleaned up via Drop
+pub async fn stream_to_temp(body: Body) -> Result<TempFile>
+```
+
+**Architecture Compliance:**
+
+| Layer | Async I/O Usage | Verification Method |
+|-------|----------------|---------------------|
+| Domain | No I/O allowed | Architecture tests check no I/O imports |
+| Application | Orchestration only (async) | Use cases are async, no blocking I/O |
+| Infrastructure | All I/O must be async | Code review + lints |
+| Presentation | Axum handlers (async) | Framework enforces |
+
+**Summary:**
+
+- ✅ **All network I/O:** `tokio::net` (never `std::net`)
+- ✅ **All filesystem I/O:** `tokio::fs` (never `std::fs`)
+- ✅ **Blocking operations:** Isolated via `spawn_blocking`
+- ✅ **HTTP streaming:** Async body streams
+- ✅ **Error handling:** Async-compatible error types
+- ✅ **Testing:** `#[tokio::test]` for all I/O tests
+
+### 8.3. Timeout Strategy
 
 ```mermaid
 graph TB
@@ -2357,7 +2572,7 @@ graph TB
 - **Analysis Timeout:** Applied in use cases using `tokio::time::timeout()` at `src/application/use_cases/`
 - **Keep-Alive Timeout:** Configured in Hyper server settings
 
-### 8.3. Connection Limits
+### 8.4. Connection Limits
 
 ```mermaid
 graph TB
