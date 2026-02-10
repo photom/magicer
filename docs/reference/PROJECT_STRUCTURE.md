@@ -214,9 +214,67 @@ Immutable objects without identity, validated on construction.
 Trait definitions for data access.
 
 - `magic_repository.rs`: `trait MagicRepository`
-  - `analyze_buffer()`: Analyze raw bytes
-  - `analyze_file()`: Analyze file by path
-  - Returns domain errors only
+
+**Trait Method Signatures:**
+
+```rust
+pub trait MagicRepository: Send + Sync {
+    /// Analyzes binary data from any source (memory, mmap, static).
+    /// 
+    /// Accepts any byte slice regardless of source:
+    /// - In-memory buffers (Vec<u8>, Bytes)
+    /// - Memory-mapped file slices (via mmap)
+    /// - Static data (compile-time arrays)
+    /// - Network buffers (HTTP body)
+    ///
+    /// # Arguments
+    /// * `data` - Byte slice to analyze (from any source)
+    /// * `filename` - Original filename for libmagic context
+    ///
+    /// # Returns
+    /// * `Ok(MagicResult)` - Analysis successful
+    /// * `Err(DomainError)` - Analysis failed or invalid input
+    fn analyze_buffer(
+        &self,
+        data: &[u8],
+        filename: &str,
+    ) -> Result<MagicResult, DomainError>;
+
+    /// Analyzes file by path (libmagic opens file internally).
+    ///
+    /// # Arguments
+    /// * `path` - Absolute path to file (must be within sandbox)
+    ///
+    /// # Returns
+    /// * `Ok(MagicResult)` - Analysis successful
+    /// * `Err(DomainError)` - File not found or analysis failed
+    fn analyze_file(
+        &self,
+        path: &Path,
+    ) -> Result<MagicResult, DomainError>;
+}
+```
+
+**Unified Interface Design:**
+
+The `analyze_buffer` method uses a unified interface accepting `&[u8]` from any source:
+
+| Source Type | Example | Works with `&[u8]` |
+|-------------|---------|-------------------|
+| In-Memory Buffer | `Vec<u8>`, `Bytes` | ✅ Yes |
+| Memory-Mapped File | `MmapBuffer::as_ref()` | ✅ Yes |
+| Static Data | `&[u8]` literal | ✅ Yes |
+| Network Buffer | HTTP body bytes | ✅ Yes |
+| Any `AsRef<[u8]>` | Custom types | ✅ Yes |
+
+**Key Design Decision:**
+
+Single method for all buffer sources rather than separate methods for mmap vs memory. The implementation treats all `&[u8]` identically when passing to libmagic FFI.
+
+**Returns:**
+- Domain errors only (no infrastructure types leak)
+- `DomainError::ValidationError` for invalid inputs
+- `DomainError::MagicError` for analysis failures
 
 #### **services/**
 Domain services for multi-entity operations.

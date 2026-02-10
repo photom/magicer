@@ -6,8 +6,11 @@
 - [4. Testing by Layer](#4-testing-by-layer)
   - [4.1. Domain Layer Testing](#41-domain-layer-testing)
   - [4.2. Application Layer Testing](#42-application-layer-testing)
-  - [4.3. Infrastructure Layer Testing](#43-infrastructure-layer-testing)
-  - [4.4. Presentation Layer Testing](#44-presentation-layer-testing)
+  - [4.3. Large Content Handling Testing](#43-large-content-handling-testing)
+  - [4.4. libmagic FFI Testing](#44-libmagic-ffi-testing)
+  - [4.5. Presentation Layer Testing](#45-presentation-layer-testing)
+  - [4.6. Infrastructure Layer Testing (Other)](#46-infrastructure-layer-testing-other)
+  - [4.7. Error Message Validation Testing](#47-error-message-validation-testing)
 - [5. Property-Based Testing](#5-property-based-testing)
 - [6. Integration Testing Strategy](#6-integration-testing-strategy)
 - [7. End-to-End Testing](#7-end-to-end-testing)
@@ -337,6 +340,506 @@ graph LR
 - Compare memory usage: small file vs large file
 - Verify large file doesn't load entire content into memory
 - Confirm mmap doesn't duplicate data
+
+#### Disk Space Exhaustion Tests
+
+**Test Location:** `tests/integration/disk_space_tests.rs`
+
+Test scenarios for disk full conditions during streaming operations.
+
+```mermaid
+sequenceDiagram
+    participant Test
+    participant Mock
+    participant UseCase
+    participant TempFile
+    
+    Test->>Mock: Set disk space = 100MB
+    Test->>UseCase: Upload 200MB file
+    
+    alt Pre-flight Check
+        UseCase->>Mock: Check available space
+        Mock-->>UseCase: 100MB < threshold
+        UseCase-->>Test: 507 Insufficient Storage
+    end
+    
+    alt During Streaming
+        UseCase->>TempFile: Write chunk 1
+        TempFile->>Mock: Write (success)
+        UseCase->>TempFile: Write chunk 2
+        TempFile->>Mock: Write (ENOSPC)
+        Mock-->>TempFile: Disk full error
+        TempFile-->>UseCase: Write failed
+        UseCase->>TempFile: Delete partial file
+        UseCase-->>Test: 507 with context
+    end
+```
+
+| Test Case | Setup | Expected Behavior | Verification |
+|-----------|-------|-------------------|--------------|
+| Pre-flight check fails | Set `available < min_free_space_mb` | Reject before temp file created | 507 error, no temp file created |
+| Disk full at chunk 1 | Mock ENOSPC on first write | Immediate error with context | 507 error, partial file cleaned up |
+| Disk full mid-stream | Mock ENOSPC at 50MB offset | Error includes offset in message | Error: "Failed to write chunk at offset 52428800" |
+| Disk full at flush | Mock ENOSPC on flush() | Cleanup and error | Partial file deleted, 507 returned |
+| Concurrent space check | Multiple requests check space simultaneously | All get consistent results | No race conditions |
+| Space freed during request | Disk space increases mid-request | Request continues successfully | Complete successfully |
+
+**Mock Implementation:**
+
+```rust
+struct MockFilesystem {
+    available_space: AtomicU64,
+    fail_at_offset: Option<u64>,
+}
+
+impl MockFilesystem {
+    fn set_available_space(&self, bytes: u64) {
+        self.available_space.store(bytes, Ordering::SeqCst);
+    }
+    
+    fn write(&self, offset: u64, data: &[u8]) -> Result<(), io::Error> {
+        if let Some(fail_offset) = self.fail_at_offset {
+            if offset >= fail_offset {
+                return Err(io::Error::from_raw_os_error(ENOSPC));
+            }
+        }
+        // Simulate write
+        Ok(())
+    }
+}
+```
+
+#### Partial Write Recovery Tests
+
+**Test Location:** `tests/integration/partial_write_tests.rs`
+
+Test cleanup and error handling when writes fail partway through streaming.
+
+| Test Case | Failure Point | Expected Recovery | Verification |
+|-----------|--------------|-------------------|--------------|
+| Fail at 25% | After 25MB written | Delete partial file, return error | Temp file deleted, error includes offset |
+| Fail at 50% | After 50MB written | Delete partial file, return error | No orphaned 50MB file remains |
+| Fail at 99% | After 99MB written | Delete partial file, return error | Complete cleanup despite large size |
+| Cleanup fails | Write fails AND unlink fails | Log warning, return original error | Warning logged, 507 still returned |
+| Multiple concurrent failures | 10 requests fail simultaneously | All partial files cleaned | Temp dir empty after tests |
+| Panic during write | Force panic mid-write | Drop trait runs, file deleted | RAII cleanup successful |
+
+**Test Implementation Pattern:**
+
+```rust
+#[tokio::test]
+async fn test_partial_write_cleanup() {
+    // Setup: Create mock that fails at 50MB
+    let mock_fs = MockFilesystem::fail_at_offset(50 * 1024 * 1024);
+    let temp_dir = TempDir::new().unwrap();
+    
+    // Execute: Try to write 100MB file
+    let result = analyze_large_content(
+        100_000_000_bytes,
+        &mock_fs,
+        &temp_dir,
+    ).await;
+    
+    // Verify: Error returned
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("Failed to write chunk at offset"));
+    assert!(err.to_string().contains("52428800")); // 50MB
+    
+    // Verify: Partial file cleaned up
+    let temp_files = std::fs::read_dir(&temp_dir).unwrap().count();
+    assert_eq!(temp_files, 0, "Partial file not cleaned up");
+    
+    // Verify: Error includes context
+    assert!(err.to_string().contains("No space left on device") ||
+            err.to_string().contains("ENOSPC"));
+}
+```
+
+**Edge Cases:**
+
+```mermaid
+graph TB
+    Write[Write Fails] --> Cleanup[Attempt Cleanup]
+    Cleanup --> Success{Cleanup OK?}
+    
+    Success -->|Yes| Log1[Log info: Cleaned up]
+    Success -->|No| Log2[Log warning: Cleanup failed]
+    
+    Log1 --> Return1[Return write error]
+    Log2 --> Return1
+    
+    Return1 --> Client[507 to Client]
+    
+    style Log2 fill:#fff4e1
+    style Client fill:#ffe1e1
+```
+
+#### File Descriptor Exhaustion Tests
+
+**Test Location:** `tests/integration/fd_limit_tests.rs`
+
+Test behavior when file descriptor limits are reached.
+
+| Test Case | Setup | Expected Behavior | Verification |
+|-----------|-------|-------------------|--------------|
+| Reach FD limit | Open `max_open_files` connections | Reject new connections | 503 Service Unavailable |
+| FD limit with temp files | `max_connections/2` + temp files = limit | Graceful degradation | Some requests succeed, others 503 |
+| Temp file creation at limit | All FDs used, try create temp | Clear error message | Error: "too many open files" |
+| FD leak detection | Run 1000 requests, check FD count | No leaks | Final FD count ≈ initial count |
+| Concurrent FD exhaustion | Multiple threads hit limit simultaneously | Thread-safe error handling | No panics, consistent errors |
+| Recovery after limit | Close connections, retry | Requests succeed after FDs freed | Successful after cleanup |
+
+**Test Implementation:**
+
+```rust
+#[tokio::test]
+async fn test_fd_exhaustion_graceful_degradation() {
+    // Setup: Set low FD limit
+    let config = TestConfig {
+        max_open_files: 100,
+        max_connections: 50,
+    };
+    let app = spawn_test_app(config).await;
+    
+    // Execute: Open connections until limit reached
+    let mut handles = vec![];
+    for i in 0..60 {
+        let handle = tokio::spawn(async move {
+            app.post("/v1/magic/content")
+                .body(large_content())
+                .send()
+                .await
+        });
+        handles.push(handle);
+    }
+    
+    // Verify: Some succeed, some rejected
+    let results: Vec<_> = join_all(handles).await;
+    let successes = results.iter().filter(|r| r.is_ok()).count();
+    let failures = results.iter().filter(|r| r.is_err()).count();
+    
+    assert!(successes > 0, "Some requests should succeed");
+    assert!(failures > 0, "Some requests should be rejected");
+    
+    // Verify: Error messages clear
+    for result in results.iter().filter(|r| r.is_err()) {
+        let err = result.as_ref().unwrap_err();
+        assert!(err.to_string().contains("too many") ||
+                err.to_string().contains("503"));
+    }
+}
+```
+
+**Monitoring Verification:**
+
+```rust
+#[tokio::test]
+async fn test_fd_metrics_updated() {
+    let metrics = TestMetrics::new();
+    let app = spawn_test_app_with_metrics(metrics.clone()).await;
+    
+    // Execute: Create connections
+    let _conn1 = app.connect().await;
+    let _conn2 = app.connect().await;
+    
+    // Verify: Metrics updated
+    assert_eq!(metrics.get("open_file_descriptors"), 2);
+    assert!(metrics.get("fd_usage_percentage") > 0.0);
+    
+    // Execute: Close connections
+    drop(_conn1);
+    drop(_conn2);
+    
+    // Verify: Metrics decremented
+    assert_eq!(metrics.get("open_file_descriptors"), 0);
+}
+```
+
+#### Orphaned File Cleanup Tests
+
+**Test Location:** `tests/integration/orphaned_file_tests.rs`
+
+Test automatic cleanup of files left behind after crashes or failures.
+
+```mermaid
+stateDiagram-v2
+    [*] --> CreateOrphans: Test setup
+    CreateOrphans --> StartServer: Create old temp files
+    StartServer --> StartupCleanup: Server starts
+    StartupCleanup --> Verify1: Check files deleted
+    Verify1 --> Runtime: Server running
+    Runtime --> BackgroundTask: 5 minutes pass
+    BackgroundTask --> CreateMore: Create more orphans
+    CreateMore --> BackgroundCleanup: Task runs
+    BackgroundCleanup --> Verify2: Check cleaned
+    Verify2 --> [*]: Test complete
+```
+
+| Test Case | Setup | Expected Behavior | Verification |
+|-----------|-------|-------------------|--------------|
+| Startup cleanup | Create files older than `temp_file_max_age_secs` | Deleted on startup | Files removed before server ready |
+| Startup preserves recent | Create files younger than threshold | Preserved on startup | Recent files remain |
+| Background task runs | Wait 5 minutes with old files | Cleanup task executes | Files deleted automatically |
+| Background task interval | Monitor for 15 minutes | Task runs 3 times | Consistent 5-minute interval |
+| Large orphan cleanup | Create 1000 old temp files | All deleted in one sweep | Temp dir empty after cleanup |
+| Concurrent cleanup | Cleanup runs while requests active | No interference | Active files unaffected |
+| Cleanup metrics | Old files present | Metrics updated | `orphaned_files_cleaned_total` incremented |
+
+**Test Implementation:**
+
+```rust
+#[tokio::test]
+async fn test_startup_cleanup_orphaned_files() {
+    let temp_dir = TempDir::new().unwrap();
+    
+    // Setup: Create orphaned temp files
+    let old_file = create_temp_file_with_age(&temp_dir, Duration::hours(2));
+    let recent_file = create_temp_file_with_age(&temp_dir, Duration::minutes(5));
+    
+    // Setup: Configure server with 1 hour threshold
+    let config = TestConfig {
+        temp_file_max_age_secs: 3600, // 1 hour
+        temp_dir: temp_dir.path(),
+    };
+    
+    // Execute: Start server (triggers startup cleanup)
+    let _app = spawn_test_app(config).await;
+    
+    // Verify: Old file deleted
+    assert!(!old_file.exists(), "Old file should be cleaned up");
+    
+    // Verify: Recent file preserved
+    assert!(recent_file.exists(), "Recent file should be preserved");
+}
+
+#[tokio::test]
+async fn test_background_cleanup_task() {
+    let temp_dir = TempDir::new().unwrap();
+    let app = spawn_test_app_with_temp_dir(&temp_dir).await;
+    
+    // Execute: Create orphaned file while server running
+    tokio::time::sleep(Duration::seconds(10)).await;
+    let orphan = create_temp_file_with_age(&temp_dir, Duration::hours(2));
+    
+    // Execute: Wait for background task (runs every 5 min)
+    tokio::time::sleep(Duration::minutes(6)).await;
+    
+    // Verify: Orphan cleaned up
+    assert!(!orphan.exists(), "Background task should clean orphan");
+}
+```
+
+**Cleanup Verification Helper:**
+
+```rust
+async fn verify_no_orphans(temp_dir: &Path, max_age: Duration) -> Result<()> {
+    let now = SystemTime::now();
+    
+    for entry in std::fs::read_dir(temp_dir)? {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        let modified = metadata.modified()?;
+        let age = now.duration_since(modified)?;
+        
+        if age > max_age {
+            return Err(anyhow!(
+                "Found orphaned file: {:?}, age: {:?}",
+                entry.path(),
+                age
+            ));
+        }
+    }
+    
+    Ok(())
+}
+```
+
+#### Mmap Failure Fallback Tests
+
+**Test Location:** `tests/integration/mmap_fallback_tests.rs`
+
+Test graceful degradation when memory mapping fails.
+
+| Test Case | Trigger Condition | `mmap_fallback_enabled=true` | `mmap_fallback_enabled=false` |
+|-----------|------------------|------------------------------|-------------------------------|
+| Resource limit exceeded | Mock `ENOMEM` | Falls back to buffer, succeeds | Returns 500 error immediately |
+| Invalid file size | Zero-byte temp file | Falls back to buffer | Returns 500 error |
+| Mmap not supported | Mock unsupported filesystem | Falls back to buffer | Returns 500 error |
+| Multiple concurrent failures | 10 mmap failures at once | All fall back successfully | All fail with errors |
+| Fallback performance | Measure time with fallback | Slower but completes | N/A (fails) |
+| Metrics tracking | Mmap fails | `mmap_fallback_used_total++` | `mmap_failures_total++` |
+
+**Test Implementation:**
+
+```rust
+#[tokio::test]
+async fn test_mmap_fallback_enabled() {
+    // Setup: Mock mmap to fail
+    let mock_mmap = MockMmap::fail_with(ErrorKind::OutOfMemory);
+    let config = TestConfig {
+        mmap_fallback_enabled: true,
+    };
+    
+    // Execute: Analyze large file
+    let result = analyze_large_content_with_mock(
+        50_000_000_bytes,
+        mock_mmap,
+        config,
+    ).await;
+    
+    // Verify: Request succeeds via fallback
+    assert!(result.is_ok(), "Should succeed with fallback");
+    
+    // Verify: Metrics updated
+    assert_eq!(metrics.get("mmap_fallback_used_total"), 1);
+    
+    // Verify: Warning logged
+    assert_logs_contain("mmap failed, using buffer fallback");
+}
+
+#[tokio::test]
+async fn test_mmap_fallback_disabled() {
+    // Setup: Mock mmap to fail
+    let mock_mmap = MockMmap::fail_with(ErrorKind::OutOfMemory);
+    let config = TestConfig {
+        mmap_fallback_enabled: false,
+    };
+    
+    // Execute: Analyze large file
+    let result = analyze_large_content_with_mock(
+        50_000_000_bytes,
+        mock_mmap,
+        config,
+    ).await;
+    
+    // Verify: Request fails
+    assert!(result.is_err(), "Should fail without fallback");
+    let err = result.unwrap_err();
+    
+    // Verify: Error message includes context
+    assert!(err.to_string().contains("Failed to memory map file"));
+    assert!(err.to_string().contains("resource limit") ||
+            err.to_string().contains("out of memory"));
+    
+    // Verify: Metrics updated
+    assert_eq!(metrics.get("mmap_failures_total"), 1);
+}
+```
+
+**Performance Comparison Test:**
+
+```rust
+#[tokio::test]
+async fn test_fallback_performance_impact() {
+    let test_file = create_test_file(50_000_000); // 50MB
+    
+    // Measure: Normal mmap performance
+    let start = Instant::now();
+    let _result1 = analyze_with_mmap(&test_file).await.unwrap();
+    let mmap_duration = start.elapsed();
+    
+    // Measure: Fallback buffer performance
+    let start = Instant::now();
+    let _result2 = analyze_with_buffer(&test_file).await.unwrap();
+    let buffer_duration = start.elapsed();
+    
+    // Verify: Fallback is slower but reasonable
+    assert!(buffer_duration > mmap_duration);
+    assert!(buffer_duration < mmap_duration * 10, 
+        "Fallback shouldn't be >10x slower");
+    
+    println!("Mmap: {:?}, Buffer: {:?}, Ratio: {:.2}x",
+        mmap_duration, buffer_duration,
+        buffer_duration.as_secs_f64() / mmap_duration.as_secs_f64());
+}
+```
+
+#### Startup Cleanup Integration Tests
+
+**Test Location:** `tests/integration/startup_tests.rs`
+
+Test complete startup sequence including cleanup and validation.
+
+| Test Case | Pre-conditions | Expected Startup Behavior | Post-startup State |
+|-----------|---------------|--------------------------|-------------------|
+| Clean start | No temp files | Server starts normally | Ready for requests |
+| Orphaned files present | 10 old temp files | Cleanup runs, server starts | Old files deleted, server ready |
+| Recent files present | 5 recent temp files | Preserved, server starts | Recent files remain |
+| Large cleanup | 1000 old temp files | Cleanup completes, server starts | All old files deleted |
+| Cleanup failure | Read-only temp dir | Log warning, server starts anyway | Best-effort cleanup |
+| Concurrent startup | 3 server instances | Each cleans independently | No interference |
+
+**Test Implementation:**
+
+```rust
+#[tokio::test]
+async fn test_startup_sequence_with_cleanup() {
+    let temp_dir = TempDir::new().unwrap();
+    
+    // Setup: Create various temp files
+    let old_files = create_temp_files(&temp_dir, 10, Duration::hours(3));
+    let recent_files = create_temp_files(&temp_dir, 5, Duration::minutes(10));
+    
+    // Setup: Capture logs
+    let logs = TestLogCapture::new();
+    
+    // Execute: Start server
+    let config = TestConfig {
+        temp_dir: temp_dir.path(),
+        temp_file_max_age_secs: 3600, // 1 hour
+    };
+    
+    let start = Instant::now();
+    let app = spawn_test_app_with_logs(config, logs.clone()).await;
+    let startup_duration = start.elapsed();
+    
+    // Verify: Startup completed quickly
+    assert!(startup_duration < Duration::seconds(5),
+        "Startup with cleanup should be fast");
+    
+    // Verify: Old files cleaned
+    for file in &old_files {
+        assert!(!file.exists(), "Old file should be deleted: {:?}", file);
+    }
+    
+    // Verify: Recent files preserved
+    for file in &recent_files {
+        assert!(file.exists(), "Recent file should remain: {:?}", file);
+    }
+    
+    // Verify: Cleanup logged
+    assert_logs_contain(&logs, "Cleaned up 10 orphaned temp files");
+    
+    // Verify: Server functional
+    let response = app.get("/v1/ping").send().await;
+    assert_eq!(response.status(), 200);
+}
+```
+
+**Startup Validation Tests:**
+
+```rust
+#[tokio::test]
+async fn test_startup_validation_sequence() {
+    let config = TestConfig::default();
+    let logs = TestLogCapture::new();
+    
+    // Execute: Start server with full validation
+    let app = spawn_test_app_with_logs(config, logs.clone()).await;
+    
+    // Verify: All validation steps logged
+    assert_logs_contain(&logs, "Validating configuration");
+    assert_logs_contain(&logs, "Checking temp directory");
+    assert_logs_contain(&logs, "Cleaning orphaned files");
+    assert_logs_contain(&logs, "Validating file descriptor limits");
+    assert_logs_contain(&logs, "Server ready");
+    
+    // Verify: Server is functional
+    let response = app.get("/v1/ping").send().await;
+    assert_eq!(response.status(), 200);
+}
+```
 
 ### 4.4. libmagic FFI Testing
 
@@ -692,6 +1195,350 @@ graph TB
 | Timeout | Request takes > 60s | 408 or 504 timeout response |
 | Body Limit | Body size 99MB | Accept |
 | Body Limit | Body size 101MB | 413 Payload Too Large |
+
+### 4.7. Error Message Validation Testing
+
+All error scenarios must verify that error messages include proper context about which operation failed and why.
+
+```mermaid
+graph TB
+    Error[Error Occurs] --> Capture[Capture Error Message]
+    Capture --> Validate[Validate Message Components]
+    
+    Validate --> V1{Operation<br/>Specified?}
+    Validate --> V2{Root Cause<br/>Specified?}
+    Validate --> V3{Details<br/>Included?}
+    Validate --> V4{Human<br/>Readable?}
+    
+    V1 -->|Yes| Pass1[✓]
+    V1 -->|No| Fail1[✗]
+    
+    V2 -->|Yes| Pass2[✓]
+    V2 -->|No| Fail2[✗]
+    
+    V3 -->|Yes| Pass3[✓]
+    V3 -->|N/A| Pass3
+    
+    V4 -->|Yes| Pass4[✓]
+    V4 -->|No| Fail4[✗]
+    
+    Pass1 --> Result[Test Result]
+    Pass2 --> Result
+    Pass3 --> Result
+    Pass4 --> Result
+    Fail1 --> Result
+    Fail2 --> Result
+    Fail4 --> Result
+    
+    style Pass1 fill:#e1ffe1
+    style Pass2 fill:#e1ffe1
+    style Pass3 fill:#e1ffe1
+    style Pass4 fill:#e1ffe1
+    style Fail1 fill:#ffe1e1
+    style Fail2 fill:#ffe1e1
+    style Fail4 fill:#ffe1e1
+```
+
+#### Required Error Message Components
+
+**Structure:** `"Failed to {operation}: {root_cause}"`
+
+**Components to Validate:**
+
+| Component | Required | Description | Test Method |
+|-----------|----------|-------------|-------------|
+| Operation | Yes | What was being attempted | Assert message contains operation name |
+| Root Cause | Yes | Why it failed | Assert message contains failure reason |
+| Details | Conditional | Context-specific info | Assert relevant details present if applicable |
+| Human Readable | Yes | Clear, understandable | Manual review + length check |
+
+#### Test Scenarios by Operation Type
+
+**1. Temp File Operations**
+
+| Test Scenario | Trigger Condition | Expected Error Message |
+|--------------|-------------------|------------------------|
+| Creation fails (disk full) | Mock disk full (ENOSPC) | `"Failed to create temp file: disk full"` or `"Failed to create temp file: No space left on device"` |
+| Creation fails (permission) | Mock permission denied | `"Failed to create temp file: permission denied"` |
+| Write fails at offset | Mock I/O error during write | `"Failed to write chunk at offset 10485760: I/O error"` |
+| Write fails (disk full) | Mock ENOSPC during write | `"Failed to write chunk at offset {N}: No space left on device"` |
+| Flush fails | Mock flush error | `"Failed to flush temp file: {cause}"` |
+| Sync fails | Mock sync error | `"Failed to sync temp file to disk: {cause}"` |
+| Delete fails | Mock unlink failure | `"Failed to delete temp file {path}: permission denied"` |
+
+**Test Implementation Pattern:**
+
+```rust
+#[test]
+fn test_temp_file_creation_error_message() {
+    // Setup: Mock disk full condition
+    let result = create_temp_file_with_mocked_error(ENOSPC);
+    
+    // Assert: Error message structure
+    let error_msg = result.unwrap_err().to_string();
+    assert!(error_msg.contains("Failed to create temp file"), 
+        "Missing operation context");
+    assert!(error_msg.contains("disk full") || error_msg.contains("No space"),
+        "Missing root cause");
+}
+```
+
+**2. Memory-Mapped I/O Operations**
+
+| Test Scenario | Trigger Condition | Expected Error Message |
+|--------------|-------------------|------------------------|
+| File open fails | Mock file not found | `"Failed to open file for mmap: file not found"` |
+| Mmap fails (limit) | Mock ENOMEM or limit | `"Failed to memory map file: resource limit exceeded"` |
+| Mmap fails (size) | Mock invalid size | `"Failed to memory map file: invalid file size"` |
+| Read fails (SIGBUS) | Simulate concurrent modification | `"Failed to read from mmap: SIGBUS received"` |
+| Munmap fails | Mock invalid address | `"Failed to unmap memory: invalid address"` |
+
+**Test Implementation:**
+
+```rust
+#[test]
+fn test_mmap_error_message() {
+    // Setup: Force mmap failure
+    let result = memory_map_file_with_limit_exceeded();
+    
+    let error_msg = result.unwrap_err().to_string();
+    assert!(error_msg.contains("Failed to memory map file"));
+    assert!(error_msg.contains("resource limit") || error_msg.contains("exceeded"));
+}
+```
+
+**3. libmagic FFI Operations**
+
+| Test Scenario | Trigger Condition | Expected Error Message |
+|--------------|-------------------|------------------------|
+| Cookie creation fails | Mock NULL return | `"Failed to create libmagic cookie: {cause}"` |
+| Database load fails | Mock database not found | `"Failed to load magic database: file not found"` |
+| Database load fails | Mock invalid database | `"Failed to load magic database: invalid format"` |
+| Buffer analysis fails | Mock NULL return | `"Failed to analyze buffer: libmagic returned NULL"` |
+| File analysis fails | Mock access denied | `"Failed to analyze file {path}: access denied"` |
+| Error retrieval fails | Mock invalid cookie | `"Failed to get libmagic error: invalid cookie"` |
+
+**Test Implementation:**
+
+```rust
+#[test]
+fn test_libmagic_analysis_error_message() {
+    // Setup: Mock libmagic returning NULL
+    let result = analyze_with_null_return();
+    
+    let error_msg = result.unwrap_err().to_string();
+    assert!(error_msg.contains("Failed to analyze buffer"));
+    assert!(error_msg.contains("libmagic returned NULL") || 
+            error_msg.contains("analysis failed"));
+}
+```
+
+**4. Disk Space Operations**
+
+| Test Scenario | Trigger Condition | Expected Error Message |
+|--------------|-------------------|------------------------|
+| Space check fails | Mock statvfs error | `"Failed to check disk space: statvfs failed"` |
+| Pre-flight check fails | Available < threshold | `"Insufficient storage space for analysis"` with details |
+| Write during stream fails | Mock ENOSPC mid-stream | `"Disk space exhausted during file processing"` with offset |
+
+**Expected Detail Format:**
+
+```
+"Temp directory has 512MB available, but 1024MB minimum required"
+"Failed to write chunk at offset 52428800: No space left on device"
+```
+
+**5. Network/HTTP Operations**
+
+| Test Scenario | Trigger Condition | Expected Error Message |
+|--------------|-------------------|------------------------|
+| Body read fails | Mock connection reset | `"Failed to read request body: connection reset"` |
+| Stream chunk fails | Mock timeout | `"Failed to stream chunk: timeout exceeded"` |
+| Response write fails | Mock broken pipe | `"Failed to write response: broken pipe"` |
+
+#### Error Context Validation Tests
+
+**Unit Test Pattern:**
+
+```rust
+#[cfg(test)]
+mod error_message_tests {
+    use super::*;
+
+    #[test]
+    fn error_messages_include_operation_context() {
+        let scenarios = vec![
+            (create_temp_file_error(), "Failed to create temp file"),
+            (write_chunk_error(1024), "Failed to write chunk at offset 1024"),
+            (mmap_error(), "Failed to memory map file"),
+            (analyze_buffer_error(), "Failed to analyze buffer"),
+        ];
+
+        for (error, expected_context) in scenarios {
+            assert!(
+                error.to_string().contains(expected_context),
+                "Error missing operation context: {}",
+                error
+            );
+        }
+    }
+
+    #[test]
+    fn error_messages_include_root_cause() {
+        let error = create_temp_file_error_with_cause(ENOSPC);
+        let msg = error.to_string();
+        
+        // Must contain both operation AND cause
+        assert!(msg.contains("Failed to create temp file"));
+        assert!(msg.contains("disk full") || msg.contains("No space"));
+    }
+
+    #[test]
+    fn error_messages_include_relevant_details() {
+        let offset = 10485760;
+        let error = write_error_at_offset(offset);
+        let msg = error.to_string();
+        
+        assert!(msg.contains(&offset.to_string()));
+    }
+}
+```
+
+**Integration Test Pattern:**
+
+```rust
+#[tokio::test]
+async fn test_http_error_response_includes_context() {
+    // Setup: Trigger specific error condition
+    let app = create_test_app_with_full_disk();
+    let response = app
+        .post("/v1/magic/content")
+        .body(large_content())
+        .send()
+        .await;
+
+    // Assert: Response includes context
+    assert_eq!(response.status(), 507);
+    let body: ErrorResponse = response.json().await;
+    
+    // Validate error message structure
+    assert!(body.error.contains("storage") || body.error.contains("disk"));
+    assert!(body.error.contains("failed") || body.error.contains("exhausted"));
+}
+```
+
+#### Error Message Anti-Patterns to Test Against
+
+**Bad Patterns (Should Fail Tests):**
+
+| Anti-Pattern | Example | Problem |
+|--------------|---------|---------|
+| Generic message | `"Operation failed"` | No operation specified |
+| Technical only | `"ENOSPC"` | Not user-friendly |
+| Missing cause | `"Error writing file"` | No root cause |
+| Missing operation | `"I/O error"` | No context |
+| Swallowed details | `"Error"` | No information |
+
+**Validation Rules:**
+
+```rust
+fn validate_error_message(msg: &str) -> Result<(), String> {
+    // Rule 1: Must not be generic
+    let generic_patterns = ["error", "failed", "operation failed"];
+    if generic_patterns.iter().any(|p| msg.to_lowercase() == *p) {
+        return Err("Error message too generic".to_string());
+    }
+
+    // Rule 2: Must contain operation verb
+    let operation_verbs = ["create", "write", "read", "map", "analyze", "delete"];
+    if !operation_verbs.iter().any(|v| msg.to_lowercase().contains(v)) {
+        return Err("Missing operation context".to_string());
+    }
+
+    // Rule 3: Must contain separator (colon)
+    if !msg.contains(':') {
+        return Err("Missing cause separator ':'".to_string());
+    }
+
+    // Rule 4: Minimum length (too short = not descriptive)
+    if msg.len() < 20 {
+        return Err("Error message too short".to_string());
+    }
+
+    Ok(())
+}
+```
+
+#### Test Coverage Requirements
+
+**Error Message Validation Coverage:**
+
+| Category | Coverage Target | Validation Method |
+|----------|----------------|-------------------|
+| Temp file operations | 100% of error paths | Unit tests with mocks |
+| Mmap operations | 100% of error paths | Unit + integration tests |
+| libmagic FFI | 100% of error paths | Unit tests with mocked FFI |
+| Disk space checks | 100% of error paths | Integration tests |
+| HTTP operations | 100% of error paths | Integration tests |
+
+**Automated Validation:**
+
+```rust
+// Test helper to validate all error messages in test suite
+#[macro_export]
+macro_rules! assert_error_context {
+    ($result:expr, $operation:expr, $cause:expr) => {
+        let error = $result.unwrap_err();
+        let msg = error.to_string();
+        assert!(msg.contains($operation), 
+            "Error missing operation '{}': {}", $operation, msg);
+        assert!(msg.contains($cause), 
+            "Error missing cause '{}': {}", $cause, msg);
+    };
+}
+
+// Usage in tests
+#[test]
+fn test_error_context() {
+    let result = create_temp_file_on_full_disk();
+    assert_error_context!(result, "create temp file", "disk full");
+}
+```
+
+#### CI/CD Integration
+
+**Error Message Linting:**
+
+Add to CI pipeline to check error messages:
+
+```bash
+# Grep for anti-patterns in error messages
+cargo test 2>&1 | grep -E "Error:|error:" | \
+  grep -E "^(error|failed|Error)$" && exit 1 || echo "No generic errors"
+```
+
+**Documentation Sync:**
+
+Ensure error examples in docs match actual error messages:
+
+```bash
+# Extract error examples from tests
+cargo test --no-run -- --list | grep error_message
+
+# Compare with documented examples in ARCHITECTURE.md
+```
+
+#### Success Criteria
+
+All error message tests must verify:
+
+1. ✅ **Operation Context:** Error specifies what operation was attempted
+2. ✅ **Root Cause:** Error explains why the operation failed
+3. ✅ **Relevant Details:** Error includes context-specific information (offset, path, etc.)
+4. ✅ **Human Readable:** Error message is clear and actionable
+5. ✅ **Consistent Format:** Follows `"Failed to {operation}: {cause}"` pattern
+6. ✅ **No Swallowing:** Context preserved across layer boundaries
+7. ✅ **No Generic Messages:** Avoids "Error", "Failed", "Operation failed" without context
 
 
 ---

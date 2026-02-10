@@ -12,7 +12,9 @@
 - [4. Component Architecture](#4-component-architecture)
   - [4.1. Domain Components](#41-domain-components)
   - [4.2. Application Flow](#42-application-flow)
-  - [4.3. Infrastructure Integration](#43-infrastructure-integration)
+  - [4.3. Large Content Handling Strategy](#43-large-content-handling-strategy)
+  - [4.4. Infrastructure Integration](#44-infrastructure-integration)
+  - [4.5. Alternative Design: HTTP Request Streaming](#45-alternative-design-http-request-streaming)
 - [5. Axum HTTP Server Architecture](#5-axum-http-server-architecture)
   - [5.1. Request Processing Flow](#51-request-processing-flow)
   - [5.2. Middleware Architecture](#52-middleware-architecture)
@@ -22,9 +24,11 @@
   - [6.1. Authentication Flow](#61-authentication-flow)
   - [6.2. Path Validation Strategy](#62-path-validation-strategy)
   - [6.3. Request Constraints](#63-request-constraints)
+  - [6.4. Memory-Mapped I/O Security](#64-memory-mapped-io-security)
 - [7. Error Handling Architecture](#7-error-handling-architecture)
   - [7.1. Error Flow](#71-error-flow)
   - [7.2. Error Mapping Strategy](#72-error-mapping-strategy)
+  - [7.3. Disk Space Error Handling](#73-disk-space-error-handling)
 - [8. Concurrency Architecture](#8-concurrency-architecture)
   - [8.1. Runtime Model](#81-runtime-model)
   - [8.2. Timeout Strategy](#82-timeout-strategy)
@@ -351,6 +355,72 @@ classDiagram
 | MagicRepository | Trait | `domain/repositories/magic_repository.rs` | Defines interface for file magic analysis operations |
 | AuthenticationService | Trait | `domain/services/authentication_service.rs` | Defines interface for credential verification |
 
+**MagicRepository Unified Interface:**
+
+The `MagicRepository` trait uses a unified interface that accepts `&[u8]` regardless of data source:
+
+```mermaid
+graph TB
+    Memory[In-Memory Vec] --> Slice1[&[u8]]
+    Mmap[Memory-Mapped File] --> Slice2[&[u8]]
+    Static[Static Data] --> Slice3[&[u8]]
+    
+    Slice1 --> Trait[MagicRepository::analyze_buffer]
+    Slice2 --> Trait
+    Slice3 --> Trait
+    
+    Trait --> Impl[Infrastructure Implementation]
+    Impl --> Libmagic[libmagic C Library]
+    
+    style Trait fill:#e1ffe1
+    style Impl fill:#fff4e1
+```
+
+**Interface Design:**
+
+| Method | Signature | Accepts | Purpose |
+|--------|-----------|---------|---------|
+| `analyze_buffer` | `(&self, data: &[u8], filename: &str) -> Result<MagicResult>` | Any byte slice | Analyzes binary data from any source |
+| `analyze_file` | `(&self, path: &Path) -> Result<MagicResult>` | File path | Analyzes file by path (libmagic opens file) |
+
+**Unified `&[u8]` Acceptance:**
+
+The `analyze_buffer` method accepts byte slices from any source without distinction:
+
+1. **In-Memory Buffers** - Small files (< 10MB) held in `Vec<u8>` or `Bytes`
+2. **Memory-Mapped Slices** - Large files (≥ 10MB) mapped via `mmap()` 
+3. **Static Data** - Compile-time embedded data or test fixtures
+4. **Network Buffers** - Data from HTTP request bodies
+5. **Any `AsRef<[u8]>`** - Any type implementing byte slice reference
+
+**Benefits of Unified Interface:**
+
+- **Simplicity:** Single method for all buffer sources
+- **Flexibility:** Caller decides memory strategy (buffer vs mmap)
+- **Zero-Copy:** Mmap slices passed without additional copying
+- **Testability:** Easy to test with static byte arrays
+- **Composability:** Works with any `&[u8]` provider
+
+**Example Usage:**
+
+```rust
+// Small file: in-memory buffer
+let buffer: Vec<u8> = read_small_file()?;
+repo.analyze_buffer(&buffer, "file.txt")?;
+
+// Large file: memory-mapped
+let mmap: MmapBuffer = create_mmap(temp_file)?;
+repo.analyze_buffer(mmap.as_ref(), "large.bin")?;
+
+// Static test data
+const TEST_DATA: &[u8] = b"test content";
+repo.analyze_buffer(TEST_DATA, "test.txt")?;
+```
+
+**Implementation Note:**
+
+Infrastructure layer (`LibmagicRepository`) receives `&[u8]` and passes it directly to libmagic's `magic_buffer()` FFI call via raw pointer. The libmagic C library treats all byte slices identically regardless of their memory source.
+
 ### 4.2. Application Flow
 
 #### Standard Content Analysis
@@ -542,10 +612,212 @@ stateDiagram-v2
 | Requirement | Implementation |
 |-------------|----------------|
 | **Unique Names** | UUID-based temp file names |
+| **Atomic Creation** | `O_CREAT \| O_EXCL` flags prevent race conditions |
 | **Atomic Cleanup** | Drop trait ensures deletion |
 | **Panic Safety** | RAII pattern for cleanup |
 | **Permission Control** | File created with 0600 (owner only) |
 | **Directory Isolation** | Separate temp directory from sandbox |
+
+**Atomic File Creation (Preventing Concurrent Write Races):**
+
+```mermaid
+sequenceDiagram
+    participant UseCase
+    participant TempFile
+    participant FileSystem
+    
+    UseCase->>TempFile: create_temp_file()
+    TempFile->>TempFile: Generate UUID filename
+    
+    TempFile->>FileSystem: open(path, O_CREAT | O_EXCL)
+    
+    alt File Does Not Exist
+        FileSystem-->>TempFile: Success (fd)
+        TempFile-->>UseCase: Ok(TempFile)
+    else File Already Exists (Race/Collision)
+        FileSystem-->>TempFile: EEXIST error
+        TempFile->>TempFile: Generate new UUID
+        TempFile->>FileSystem: open(new_path, O_CREAT | O_EXCL)
+        FileSystem-->>TempFile: Success (fd)
+        TempFile-->>UseCase: Ok(TempFile)
+    end
+```
+
+**Atomic Creation Strategy:**
+
+| Component | Specification | Purpose |
+|-----------|--------------|---------|
+| **Filename Format** | `{request_id}_{timestamp}_{random}.tmp` | Collision-resistant naming |
+| **Open Flags** | `O_CREAT \| O_EXCL \| O_RDWR` | Atomic creation, fail if exists |
+| **Collision Handling** | Retry with new random suffix (max 3 attempts) | Handle UUID collision edge case |
+| **Permissions** | `0600` (owner read/write only) | Security isolation |
+| **Error Detection** | `EEXIST` errno indicates collision | Explicit collision detection |
+
+**Race Condition Prevention:**
+
+```mermaid
+graph TB
+    Request1[Request 1] --> UUID1[Generate UUID abc123]
+    Request2[Request 2] --> UUID2[Generate UUID abc123]
+    
+    UUID1 --> Create1[open O_CREAT|O_EXCL]
+    UUID2 --> Create2[open O_CREAT|O_EXCL]
+    
+    Create1 --> Check1{File Exists?}
+    Create2 --> Check2{File Exists?}
+    
+    Check1 -->|No| Success1[Create Success]
+    Check2 -->|Yes| Fail[EEXIST Error]
+    
+    Fail --> Retry[Generate New UUID def456]
+    Retry --> Create3[open O_CREAT|O_EXCL]
+    Create3 --> Success2[Create Success]
+    
+    style Success1 fill:#e1ffe1
+    style Success2 fill:#e1ffe1
+    style Fail fill:#ffe1e1
+```
+
+**Implementation Requirements:**
+
+```rust
+use std::fs::OpenOptions;
+use std::os::unix::fs::OpenOptionsExt;
+
+// Atomic temp file creation with O_EXCL
+fn create_temp_file_atomic(base_dir: &Path) -> Result<File> {
+    const MAX_RETRIES: usize = 3;
+    
+    for attempt in 0..MAX_RETRIES {
+        let filename = generate_unique_filename();
+        let path = base_dir.join(&filename);
+        
+        match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)  // O_CREAT | O_EXCL
+            .mode(0o600)       // Owner only
+            .open(&path)
+        {
+            Ok(file) => return Ok(file),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                // Collision detected, retry with new name
+                tracing::warn!(
+                    "Temp file collision on attempt {}: {}",
+                    attempt + 1,
+                    filename
+                );
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    
+    Err(Error::TempFileCreation("Max retries exceeded"))
+}
+
+fn generate_unique_filename() -> String {
+    let request_id = Uuid::new_v4();
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let random = rand::random::<u32>();
+    
+    format!("{}_{}_{}.tmp", request_id, timestamp, random)
+}
+```
+
+**Collision Probability Analysis:**
+
+| Scenario | Probability | Mitigation |
+|----------|------------|------------|
+| UUID v4 collision | 2^-122 (negligible) | UUIDs provide sufficient entropy |
+| Timestamp collision | Possible with concurrent requests | Add random suffix |
+| Combined collision | 2^-122 × 2^-32 (virtually impossible) | Triple-component naming |
+| Retry exhaustion | Only if 3 consecutive collisions | Extremely unlikely, logged |
+
+**Atomic Operations Guarantee:**
+
+```mermaid
+stateDiagram-v2
+    [*] --> Attempt1: Generate filename
+    Attempt1 --> Open1: open(O_CREAT|O_EXCL)
+    
+    Open1 --> Success: File created atomically
+    Open1 --> Collision: EEXIST
+    
+    Collision --> Attempt2: Generate new filename
+    Attempt2 --> Open2: open(O_CREAT|O_EXCL)
+    
+    Open2 --> Success
+    Open2 --> Collision2: EEXIST (rare)
+    
+    Collision2 --> Attempt3: Generate new filename
+    Attempt3 --> Open3: open(O_CREAT|O_EXCL)
+    
+    Open3 --> Success
+    Open3 --> Exhausted: Max retries
+    
+    Success --> [*]: Proceed with write
+    Exhausted --> [*]: Return error
+    
+    state Success {
+        [*] --> Created: Atomic creation
+        Created --> Locked: Exclusive access
+    }
+```
+
+**Benefits of Atomic Creation:**
+
+1. **Race Condition Prevention:** `O_EXCL` ensures atomic test-and-set
+2. **No TOCTOU Vulnerability:** Check and create in single atomic operation
+3. **Concurrent Safety:** Multiple threads/processes cannot create same file
+4. **Explicit Collision Detection:** `EEXIST` clearly indicates collision
+5. **Deterministic Retry:** Known error condition enables retry logic
+
+**Security Properties:**
+
+| Property | Guarantee | Verification |
+|----------|-----------|--------------|
+| **Atomicity** | File creation is atomic operation | Kernel-level guarantee |
+| **Exclusivity** | Only one process can create specific filename | `O_EXCL` flag enforcement |
+| **No Symlink Attacks** | `O_EXCL` fails on existing symlinks | POSIX specification |
+| **Permission Enforcement** | Mode set atomically at creation | `mode(0o600)` |
+
+**Error Handling:**
+
+| Error Condition | errno | Action |
+|----------------|-------|--------|
+| File already exists | `EEXIST` | Retry with new filename |
+| Permission denied | `EACCES` | Return error (directory permission issue) |
+| Disk full | `ENOSPC` | Return 507 Insufficient Storage |
+| Max retries exceeded | N/A | Return error with context |
+
+**Testing Requirements:**
+
+1. **Collision Simulation:** Force same UUID generation to verify retry
+2. **Concurrent Creation:** Spawn multiple threads with same filename
+3. **Permission Verification:** Ensure 0600 mode set atomically
+4. **Retry Logic:** Verify max 3 attempts, exponential backoff
+5. **Error Context:** Verify error messages include filename and attempt count
+
+**Monitoring:**
+
+```rust
+// Metrics for temp file creation
+metrics::counter!("temp_file_creation_total").increment(1);
+metrics::counter!("temp_file_collision_total").increment(1); // On EEXIST
+metrics::counter!("temp_file_retry_total").increment(1);      // On retry
+metrics::counter!("temp_file_retry_exhausted_total").increment(1); // On max retries
+```
+
+**Implementation Location:**
+
+- **Atomic Creation:** `infrastructure/filesystem/temp_file_handler.rs`
+- **Filename Generation:** `infrastructure/filesystem/temp_file_handler.rs`
+- **Retry Logic:** `infrastructure/filesystem/temp_file_handler.rs`
+- **Error Types:** `domain/errors/storage_error.rs`
 
 #### Error Handling
 
@@ -643,6 +915,368 @@ graph TB
 | PathSandbox | `infrastructure/filesystem/sandbox.rs` | Path canonicalization and boundary enforcement |
 | TempFileHandler | `infrastructure/filesystem/temp_file_handler.rs` | RAII-based temporary file management with streaming |
 | ServerConfig | `infrastructure/config/server_config.rs` | Configuration loading from TOML and environment |
+
+### 4.5. Alternative Design: HTTP Request Streaming
+
+This section explores an alternative approach to handling large file uploads by streaming HTTP request bodies directly to temporary files instead of buffering in memory first.
+
+#### Current Design (Buffer-First Approach)
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Axum
+    participant Buffer
+    participant UseCase
+    participant TempFile
+    participant Analysis
+    
+    Client->>Axum: Upload 100MB file
+    Axum->>Buffer: Buffer entire body
+    Note over Buffer: 100MB in memory
+    Buffer-->>Axum: Complete
+    Axum->>UseCase: Pass Bytes
+    
+    alt Large file (≥ 10MB)
+        UseCase->>TempFile: Write to temp file
+        TempFile->>TempFile: Stream chunks
+        TempFile->>Analysis: Analyze via mmap
+    else Small file (< 10MB)
+        UseCase->>Analysis: Analyze in memory
+    end
+    
+    Analysis-->>Client: Result
+```
+
+**Current Flow:**
+```
+Client → Axum Buffering (100MB memory) → Handler → Use Case → Decision (size check) → Temp File or Memory Analysis
+```
+
+**Memory Footprint:** Peak 100MB per request during buffering phase
+
+#### Alternative Design (Stream-First Approach)
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Axum
+    participant Stream
+    participant TempFile
+    participant Analysis
+    participant Cleanup
+    
+    Client->>Axum: Start upload
+    Axum->>Stream: Get body stream
+    Stream->>TempFile: Create temp file
+    
+    loop For each chunk (64KB)
+        Client->>Stream: Send chunk
+        Stream->>TempFile: Write chunk immediately
+        Note over Stream: Only 64KB in memory
+    end
+    
+    TempFile->>TempFile: Flush & sync
+    TempFile->>Analysis: Analyze via mmap
+    Analysis-->>Client: Result
+    TempFile->>Cleanup: Delete file
+```
+
+**Alternative Flow:**
+```
+Client → Stream to Temp File (64KB buffer) → Analysis → Response
+```
+
+**Memory Footprint:** Constant 64KB regardless of file size
+
+#### Comparison
+
+```mermaid
+graph TB
+    subgraph Current["Buffer-First (Current)"]
+        C1[Client] --> B1[Buffer 100MB]
+        B1 --> S1{Size Check}
+        S1 -->|Large| T1[Write to Temp]
+        S1 -->|Small| M1[Memory Analysis]
+        T1 --> A1[Analyze]
+        M1 --> A1
+    end
+    
+    subgraph Alternative["Stream-First (Alternative)"]
+        C2[Client] --> S2[Stream 64KB chunks]
+        S2 --> T2[Write to Temp]
+        T2 --> A2[Analyze via mmap]
+    end
+    
+    style B1 fill:#ffe1e1
+    style S2 fill:#e1ffe1
+```
+
+**Detailed Comparison:**
+
+| Aspect | Buffer-First (Current) | Stream-First (Alternative) |
+|--------|----------------------|--------------------------|
+| **Memory Usage** | 100MB per request peak | Constant 64KB per request |
+| **Initial Latency** | Wait for full upload | Start processing immediately |
+| **Disk I/O** | Only for large files (≥10MB) | Always creates temp file |
+| **Small Files** | Optimal (memory only) | Suboptimal (unnecessary disk I/O) |
+| **Large Files** | Writes twice (buffer → temp) | Writes once (stream → temp) |
+| **Error Detection** | After full upload | During upload (disk full detected early) |
+| **Implementation** | Simple (Axum default) | Complex (custom streaming) |
+| **Backpressure** | Limited (buffer fills up) | Excellent (disk can absorb) |
+| **Validation Timing** | Before any disk I/O | After partial write |
+
+#### Benefits of Stream-First Design
+
+**1. Constant Memory Usage**
+
+```mermaid
+graph LR
+    subgraph Current
+        R1[Request 1: 100MB] --> M1[Memory]
+        R2[Request 2: 100MB] --> M1
+        R3[Request 3: 100MB] --> M1
+        M1 --> Total1[Total: 300MB]
+    end
+    
+    subgraph Alternative
+        R4[Request 1: 64KB] --> M2[Memory]
+        R5[Request 2: 64KB] --> M2
+        R6[Request 3: 64KB] --> M2
+        M2 --> Total2[Total: 192KB]
+    end
+    
+    style Total1 fill:#ffe1e1
+    style Total2 fill:#e1ffe1
+```
+
+- Memory usage independent of file size
+- Predictable resource consumption
+- Better behavior under concurrent load
+- No risk of OOM for large files
+
+**2. Earlier Failure Detection**
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Server
+    participant Disk
+    
+    Note over Client,Disk: Current Design
+    Client->>Server: Upload 100MB (buffered)
+    Server->>Disk: Check space
+    Disk-->>Server: Full!
+    Server-->>Client: 507 error (after full upload)
+    
+    Note over Client,Disk: Alternative Design
+    Client->>Server: Start upload
+    Server->>Disk: Check space
+    Disk-->>Server: Full!
+    Server-->>Client: 507 error (immediately)
+```
+
+- Disk full detected before buffering entire upload
+- Client wastes less bandwidth
+- Faster error feedback
+- Better user experience
+
+**3. Better Backpressure Handling**
+
+```mermaid
+graph TB
+    Client[Fast Client] --> Network[Network]
+    Network --> Server[Server]
+    Server --> Disk[Disk I/O]
+    
+    Disk -->|Slow| Backpressure[Backpressure]
+    Backpressure -->|Pause| Network
+    Network -->|Slow down| Client
+    
+    style Backpressure fill:#fff4e1
+```
+
+- TCP backpressure naturally slows client
+- Disk speed limits upload rate
+- No large buffer accumulation
+- System self-regulates
+
+#### Trade-offs of Stream-First Design
+
+**1. More Complex Implementation**
+
+```rust
+// Current: Simple
+let bytes = axum::body::to_bytes(body, limit).await?;
+use_case.execute(bytes).await?;
+
+// Alternative: Complex
+let mut stream = body.into_data_stream();
+let temp_file = create_temp_file().await?;
+while let Some(chunk) = stream.next().await {
+    temp_file.write_chunk(chunk?).await?;
+}
+temp_file.flush().await?;
+use_case.execute_from_file(temp_file.path()).await?;
+```
+
+**Complexity Factors:**
+- Custom stream handling required
+- Error handling for partial writes
+- Chunk size tuning
+- Progress tracking
+- Graceful shutdown during streaming
+
+**2. Temp File Created Even for Small Files**
+
+```mermaid
+graph TB
+    Request[Request: 1KB file] --> Stream[Stream to Temp]
+    Stream --> Write[Write 1KB to disk]
+    Write --> Read[Read 1KB from disk]
+    Read --> Analyze[Analyze]
+    
+    Note1[Unnecessary disk I/O<br/>for tiny files]
+    
+    style Note1 fill:#fff4e1
+```
+
+- Small files (< 10MB) pay disk I/O cost unnecessarily
+- Current design keeps them in memory (faster)
+- Potential optimization: Hybrid approach (buffer small, stream large)
+
+**3. Validation After Partial Write**
+
+```mermaid
+stateDiagram-v2
+    [*] --> Streaming: Client starts upload
+    Streaming --> Validate: After 50MB written
+    Validate --> Invalid: Auth fails
+    Invalid --> Cleanup: Delete 50MB temp file
+    Cleanup --> [*]: 401 error
+    
+    Note: Wasted 50MB disk write
+```
+
+- Authentication checked after streaming starts
+- Invalid requests waste disk I/O
+- Mitigation: Early validation (headers, auth) before streaming
+
+#### Implementation Considerations
+
+**Hybrid Approach (Recommended):**
+
+```mermaid
+graph TB
+    Request[Incoming Request] --> Size{Content-Length}
+    
+    Size -->|< 10MB| Buffer[Buffer in Memory]
+    Size -->|≥ 10MB| Stream[Stream to Temp File]
+    Size -->|Unknown| Stream
+    
+    Buffer --> Analyze1[Analyze in Memory]
+    Stream --> Analyze2[Analyze via mmap]
+    
+    style Buffer fill:#e1ffe1
+    style Stream fill:#e1ffe1
+```
+
+**Strategy:**
+- Small files (< 10MB): Buffer in memory (current approach)
+- Large files (≥ 10MB): Stream to temp (alternative approach)
+- Best of both worlds: Fast for small, memory-efficient for large
+
+**Implementation Location:**
+
+| Component | Location | Responsibility |
+|-----------|----------|----------------|
+| Stream Handler | `presentation/http/extractors/body_stream.rs` | Custom Axum extractor for streaming |
+| Temp Writer | `infrastructure/filesystem/stream_writer.rs` | Async streaming to temp file |
+| Hybrid Logic | `application/use_cases/analyze_content.rs` | Choose buffer vs stream based on size |
+
+#### Performance Impact
+
+**Benchmark Assumptions:**
+- 1000 concurrent requests
+- Mix: 70% small (< 10MB), 30% large (≥ 10MB)
+- SSD storage
+
+| Metric | Current | Alternative | Hybrid |
+|--------|---------|-------------|--------|
+| Peak Memory | 30GB (300 × 100MB) | 60MB (1000 × 64KB) | 7GB (700 × 10MB) |
+| Disk I/O | 30 requests | 1000 requests | 330 requests |
+| Throughput | ~500 req/s | ~800 req/s | ~700 req/s |
+| Latency (p99) | 2500ms | 800ms | 1200ms |
+
+**Recommendation:** Hybrid approach provides best balance.
+
+#### Decision Summary
+
+```mermaid
+graph TB
+    Decision{Choose Design}
+    
+    Decision -->|Rejected| D1[Buffer-First]
+    Decision -->|Adopted| D2[Stream-Direct]
+    Decision -->|Considered| D3[Hybrid]
+    
+    D1 --> P1[✓ Simple<br/>✓ Fast for small<br/>✗ High memory<br/>✗ OOM risk]
+    D2 --> P2[✓ Low memory 64KB<br/>✓ Early errors<br/>✓ Predictable<br/>~ Complex]
+    D3 --> P3[✓ Balanced<br/>~ More complex<br/>~ Delayed to v2]
+    
+    style D2 fill:#e1ffe1
+```
+
+**Adopted Approach:** Stream-direct (Alternative Design)
+
+**Decision Rationale:**
+
+| Factor | Weight | Buffer-First | Stream-Direct | Winner |
+|--------|--------|--------------|---------------|--------|
+| Memory Efficiency | High | ❌ 100MB/request | ✅ 64KB constant | Stream |
+| Predictability | High | ❌ Scales with file size | ✅ Constant | Stream |
+| Error Detection | Medium | ❌ After full upload | ✅ During upload | Stream |
+| Implementation | Medium | ✅ Simple | ❌ Complex | Buffer |
+| Small File Perf | Low | ✅ No disk I/O | ❌ Disk I/O | Buffer |
+| **Overall** | - | **2/5** | **4/5** | **Stream** |
+
+**Key Reasons for Adoption:**
+
+1. **Memory Efficiency (Critical):**
+   - Constant 64KB memory usage regardless of file size
+   - Prevents OOM under concurrent load (300 concurrent 100MB = 30GB vs 19MB)
+   - Enables higher connection limits with same hardware
+
+2. **Predictable Resource Usage (Critical):**
+   - Memory usage does not scale with request size
+   - Easier capacity planning and monitoring
+   - Better behavior under load spikes
+
+3. **Earlier Error Detection (Important):**
+   - Disk full detected immediately, not after wasting bandwidth
+   - Client gets faster feedback on failures
+   - Saves network resources
+
+4. **Production Readiness (Important):**
+   - More robust under high concurrency
+   - Better backpressure handling
+   - Scales to higher throughput
+
+**Trade-offs Accepted:**
+
+- ❌ More complex implementation (streaming, error handling)
+- ❌ All files use temp directory (even small ones)
+- ❌ Validation happens after partial write (requires cleanup)
+
+**Future Enhancement:** Hybrid approach (buffer small files < 10MB) deferred to v2.0
+
+**Implementation Priority:** High - foundational for scalability
+
+#### References
+
+- **Axum Body Streaming:** https://docs.rs/axum/latest/axum/body/struct.Body.html
+- **Tokio Stream:** https://docs.rs/tokio-stream/latest/tokio_stream/
+- **HTTP Backpressure:** RFC 9110 Section 9.3.1
 
 ---
 
@@ -924,6 +1558,180 @@ graph TB
 | Analysis Timeout | 30s | Use case level | Prevent indefinite blocking |
 | Keep-Alive Timeout | 75s | Hyper configuration | Balance connection reuse and cleanup |
 
+### 6.4. Memory-Mapped I/O Security
+
+Memory-mapped I/O used for large file analysis must follow strict security requirements to prevent memory corruption, unauthorized access, and timing attacks.
+
+```mermaid
+graph TB
+    File[Temporary File] --> Open[Open File Descriptor]
+    Open --> Mmap[Create Memory Map]
+    
+    Mmap --> P1[PROT_READ ONLY]
+    Mmap --> P2[MAP_PRIVATE Copy-on-Write]
+    Mmap --> P3[No PROT_EXEC]
+    
+    P1 --> Protection[Memory Protection]
+    P2 --> Protection
+    P3 --> Protection
+    
+    Protection --> Monitor[Signal Handler]
+    Monitor --> SIGBUS{SIGBUS?}
+    
+    SIGBUS -->|File Modified| Unmap[Unmap Memory]
+    SIGBUS -->|File Truncated| Unmap
+    Unmap --> Error[Return Error]
+    
+    style P1 fill:#e1ffe1
+    style P2 fill:#e1ffe1
+    style P3 fill:#e1ffe1
+    style Error fill:#ffe1e1
+```
+
+**Required Memory Map Flags:**
+
+| Flag | Purpose | Security Benefit |
+|------|---------|------------------|
+| `PROT_READ` | Read-only access | Prevents accidental or malicious writes |
+| No `PROT_WRITE` | Deny write permission | Protects file integrity during analysis |
+| No `PROT_EXEC` | Deny execute permission | Prevents code injection via mapped memory |
+| `MAP_PRIVATE` | Copy-on-write semantics | Isolates process from concurrent modifications |
+
+**Security Properties:**
+
+```mermaid
+classDiagram
+    class MemoryMap {
+        +file_descriptor: RawFd
+        +address: *const u8
+        +length: usize
+        +flags: MapFlags
+        +mmap() Result~Self~
+        +unmap() Result~()~
+    }
+    
+    class MapFlags {
+        +PROT_READ: Protection
+        +MAP_PRIVATE: Visibility
+        +validate() bool
+    }
+    
+    MemoryMap --> MapFlags
+    
+    note for MapFlags "Required:\n- PROT_READ only\n- MAP_PRIVATE\n- No PROT_WRITE\n- No PROT_EXEC"
+```
+
+**Protection Mechanisms:**
+
+1. **Read-Only Mapping (`PROT_READ`)**
+   - Mapped memory region has read-only permissions
+   - Write attempts trigger SIGSEGV (segmentation fault)
+   - Prevents corruption of temporary files
+   - Ensures analysis cannot modify original content
+
+2. **Private Copy-on-Write (`MAP_PRIVATE`)**
+   - Changes made by process are not visible to other processes
+   - Protects against shared memory attacks
+   - Concurrent file modifications do not affect mapped view
+   - Process-local copy created on write attempt
+
+3. **No Execute Permission**
+   - Memory region cannot contain executable code
+   - Prevents code injection attacks
+   - Mitigates ROP (Return-Oriented Programming) exploits
+   - Defense-in-depth security layer
+
+4. **SIGBUS Handling**
+   - Signal raised when mapped file is modified or truncated
+   - Signal raised when accessing beyond file size
+   - Handler gracefully unmaps memory and returns error
+   - Prevents undefined behavior and crashes
+
+**Threat Mitigation:**
+
+| Threat | Mitigation | Implementation |
+|--------|-----------|----------------|
+| File Modification During Analysis | MAP_PRIVATE + SIGBUS handler | Isolated copy, graceful error on change |
+| Timing Attacks via Page Faults | Read-only prevents information leakage | No write side-channels |
+| Memory Corruption | PROT_READ prevents writes | Hardware-enforced protection |
+| Code Injection | No PROT_EXEC | Cannot execute mapped memory |
+| Shared Memory Attacks | MAP_PRIVATE isolates process | Private copy-on-write |
+| Unauthorized File Access | File created with 0600 permissions | Owner-only access |
+
+**Error Handling Flow:**
+
+```mermaid
+sequenceDiagram
+    participant UseCase
+    participant Mmap
+    participant Kernel
+    participant SignalHandler
+    participant Cleanup
+    
+    UseCase->>Mmap: mmap(fd, PROT_READ, MAP_PRIVATE)
+    Mmap->>Kernel: System call
+    Kernel-->>Mmap: Memory address
+    Mmap-->>UseCase: Ok(mapped_slice)
+    
+    alt Concurrent File Modification
+        UseCase->>Kernel: Access mapped memory
+        Kernel->>SignalHandler: SIGBUS signal
+        SignalHandler->>Mmap: Mark error state
+        SignalHandler-->>UseCase: Return from signal
+        UseCase->>Mmap: munmap()
+        Mmap->>Cleanup: Delete temp file
+        UseCase-->>UseCase: Return error to client
+    else Normal Operation
+        UseCase->>UseCase: Analyze via libmagic
+        UseCase->>Mmap: munmap()
+        Mmap->>Cleanup: Delete temp file
+        UseCase-->>UseCase: Return result
+    end
+```
+
+**Implementation Location:**
+
+- **Mmap Wrapper:** `infrastructure/magic/mmap.rs` - Safe wrapper around `libc::mmap`
+- **Signal Handler:** `infrastructure/magic/signals.rs` - SIGBUS handler setup
+- **Flag Validation:** Compile-time checks ensure correct flags
+- **Error Conversion:** Maps SIGBUS to domain error type
+
+**Validation at Runtime:**
+
+```mermaid
+graph TB
+    Create[Create Temp File] --> Perms[Set 0600 Permissions]
+    Perms --> Mmap[Call mmap]
+    Mmap --> Validate{Validate Flags}
+    
+    Validate -->|PROT_READ| V1[✓ Read-only]
+    Validate -->|MAP_PRIVATE| V2[✓ Copy-on-write]
+    Validate -->|No PROT_WRITE| V3[✓ No write]
+    Validate -->|No PROT_EXEC| V4[✓ No execute]
+    
+    V1 --> Check{All Valid?}
+    V2 --> Check
+    V3 --> Check
+    V4 --> Check
+    
+    Check -->|Yes| Proceed[Proceed with Analysis]
+    Check -->|No| Panic[Panic: Security Violation]
+    
+    style V1 fill:#e1ffe1
+    style V2 fill:#e1ffe1
+    style V3 fill:#e1ffe1
+    style V4 fill:#e1ffe1
+    style Panic fill:#ffe1e1
+```
+
+**Testing Requirements:**
+
+- Unit tests verify correct mmap flags
+- Integration tests simulate file modification during mapping
+- SIGBUS handler tests verify graceful degradation
+- Security tests attempt privilege escalation via mmap
+- Fuzz tests with concurrent file operations
+
 ---
 
 ## 7. Error Handling Architecture
@@ -1020,6 +1828,435 @@ All error responses follow this JSON structure defined in the OpenAPI specificat
 - Presentation layer sanitizes errors to prevent information leakage
 - All errors include request_id for tracing
 - 5xx errors log full details internally but return generic messages externally
+
+**Error Context Requirements:**
+
+All errors must include context about which operation failed to enable effective debugging and troubleshooting.
+
+```mermaid
+graph TB
+    Operation[Operation Fails] --> Context[Add Operation Context]
+    Context --> Cause[Add Failure Cause]
+    Cause --> Details[Add Relevant Details]
+    
+    Details --> Error[Complete Error Message]
+    
+    Error --> Example1["Failed to create temp file: disk full"]
+    Error --> Example2["Failed to write chunk at offset 10485760: I/O error"]
+    Error --> Example3["Failed to memory map file: resource limit exceeded"]
+    Error --> Example4["Failed to analyze buffer: libmagic returned NULL"]
+    
+    style Error fill:#e1ffe1
+    style Example1 fill:#fff4e1
+    style Example2 fill:#fff4e1
+    style Example3 fill:#fff4e1
+    style Example4 fill:#fff4e1
+```
+
+**Error Message Structure:**
+
+```
+"Failed to {operation}: {root_cause}"
+```
+
+**Required Components:**
+
+| Component | Description | Example |
+|-----------|-------------|---------|
+| **Operation** | What the system was attempting to do | `create temp file`, `write chunk`, `memory map file`, `analyze buffer` |
+| **Root Cause** | Why the operation failed | `disk full`, `I/O error`, `resource limit exceeded`, `libmagic returned NULL` |
+| **Details** (optional) | Additional context | `at offset 10485760`, `file: /tmp/abc123`, `errno: ENOMEM` |
+
+**Error Context by Operation Type:**
+
+**1. Temp File Operations:**
+
+| Operation | Error Message Template | Example |
+|-----------|----------------------|---------|
+| File creation | `Failed to create temp file: {cause}` | `Failed to create temp file: disk full` |
+| File write | `Failed to write chunk at offset {offset}: {cause}` | `Failed to write chunk at offset 10485760: I/O error` |
+| File flush | `Failed to flush temp file: {cause}` | `Failed to flush temp file: broken pipe` |
+| File sync | `Failed to sync temp file to disk: {cause}` | `Failed to sync temp file to disk: I/O error` |
+| File deletion | `Failed to delete temp file {path}: {cause}` | `Failed to delete temp file /tmp/abc123: permission denied` |
+
+**2. Memory-Mapped I/O Operations:**
+
+| Operation | Error Message Template | Example |
+|-----------|----------------------|---------|
+| File open | `Failed to open file for mmap: {cause}` | `Failed to open file for mmap: file not found` |
+| Mmap creation | `Failed to memory map file: {cause}` | `Failed to memory map file: resource limit exceeded` |
+| Mmap read | `Failed to read from mmap: {cause}` | `Failed to read from mmap: SIGBUS received` |
+| Munmap | `Failed to unmap memory: {cause}` | `Failed to unmap memory: invalid address` |
+
+**3. libmagic FFI Operations:**
+
+| Operation | Error Message Template | Example |
+|-----------|----------------------|---------|
+| Cookie creation | `Failed to create libmagic cookie: {cause}` | `Failed to create libmagic cookie: insufficient memory` |
+| Database load | `Failed to load magic database: {cause}` | `Failed to load magic database: file not found` |
+| Buffer analysis | `Failed to analyze buffer: {cause}` | `Failed to analyze buffer: libmagic returned NULL` |
+| File analysis | `Failed to analyze file {path}: {cause}` | `Failed to analyze file /data/test.bin: access denied` |
+| Error retrieval | `Failed to get libmagic error: {cause}` | `Failed to get libmagic error: invalid cookie` |
+
+**4. Disk Space Operations:**
+
+| Operation | Error Message Template | Example |
+|-----------|----------------------|---------|
+| Space check | `Failed to check disk space: {cause}` | `Failed to check disk space: statvfs failed` |
+| Insufficient space | `Insufficient storage space for analysis` | `Temp directory has 512MB available, but 1024MB minimum required` |
+| Write during stream | `Disk space exhausted during file processing` | `Failed to write chunk at offset 52428800: No space left on device` |
+
+**5. Network/HTTP Operations:**
+
+| Operation | Error Message Template | Example |
+|-----------|----------------------|---------|
+| Body read | `Failed to read request body: {cause}` | `Failed to read request body: connection reset` |
+| Stream chunk | `Failed to stream chunk: {cause}` | `Failed to stream chunk: timeout exceeded` |
+| Response write | `Failed to write response: {cause}` | `Failed to write response: broken pipe` |
+
+**Error Context Propagation:**
+
+```mermaid
+sequenceDiagram
+    participant Infra as Infrastructure
+    participant App as Application
+    participant Pres as Presentation
+    participant Client
+    
+    Infra->>Infra: Operation fails
+    Note over Infra: Create error with context:<br/>"Failed to write chunk at offset 10485760: I/O error"
+    
+    Infra->>App: Return domain error with context
+    App->>App: Wrap in application error
+    Note over App: Preserve original context
+    
+    App->>Pres: Return application error
+    Pres->>Pres: Map to HTTP error
+    
+    alt 5xx Error (Internal)
+        Note over Pres: Log full context internally
+        Pres->>Client: Generic message externally
+    else 4xx Error (Client)
+        Note over Pres: Return context to client
+        Pres->>Client: Full context in response
+    end
+```
+
+**Context Preservation Rules:**
+
+1. **Infrastructure Layer:**
+   - Capture operation name and failure cause at error site
+   - Include relevant details (offset, path, errno)
+   - Use `format!()` to construct descriptive message
+   - Map to domain error with context preserved
+
+2. **Application Layer:**
+   - Wrap infrastructure errors without losing context
+   - Add application-level context if needed
+   - Never swallow error details
+   - Maintain full error chain
+
+3. **Presentation Layer:**
+   - For 4xx errors: Return full context to client (actionable)
+   - For 5xx errors: Log full context internally, return generic message externally
+   - Always include request_id for correlation
+
+**Implementation Example:**
+
+```rust
+// Infrastructure: Capture context at error site
+match std::fs::File::create(&temp_path) {
+    Ok(file) => Ok(file),
+    Err(e) => Err(DomainError::Storage(format!(
+        "Failed to create temp file: {}",
+        e
+    )))
+}
+
+// Infrastructure: Include operation details
+match file.write_all(&chunk) {
+    Ok(_) => Ok(()),
+    Err(e) => Err(DomainError::Storage(format!(
+        "Failed to write chunk at offset {}: {}",
+        offset, e
+    )))
+}
+
+// Application: Preserve context when wrapping
+use_case_result.map_err(|domain_err| {
+    ApplicationError::StorageError {
+        context: domain_err.to_string(), // Preserves infrastructure context
+        request_id: request.id.clone(),
+    }
+})?;
+```
+
+**Testing Error Context:**
+
+All error scenarios must verify:
+1. ✅ Operation name is included
+2. ✅ Root cause is included
+3. ✅ Relevant details are included (if applicable)
+4. ✅ Error message is human-readable
+5. ✅ Context is preserved across layer boundaries
+
+**Bad Examples (Missing Context):**
+
+❌ `"Operation failed"` - No operation specified
+❌ `"I/O error"` - No operation context
+❌ `"Error: ENOSPC"` - Technical but not descriptive
+❌ `"Error writing file"` - Missing which file, why it failed
+
+**Good Examples (With Context):**
+
+✅ `"Failed to create temp file: disk full"`
+✅ `"Failed to write chunk at offset 10485760: I/O error"`
+✅ `"Failed to memory map file: resource limit exceeded"`
+✅ `"Failed to analyze buffer: libmagic returned NULL"`
+
+### 7.3. Disk Space Error Handling
+
+For large file analysis requiring temporary file streaming, disk space exhaustion must be detected early and handled gracefully.
+
+```mermaid
+sequenceDiagram
+    participant UseCase
+    participant DiskCheck
+    participant TempFile
+    participant Stream
+    participant Cleanup
+    
+    UseCase->>DiskCheck: Check available space
+    DiskCheck->>DiskCheck: statvfs(temp_dir)
+    
+    alt Insufficient Space (< min_free_space_mb)
+        DiskCheck-->>UseCase: InsufficientStorage error
+        UseCase-->>UseCase: Return 507 immediately
+    else Sufficient Space
+        DiskCheck-->>UseCase: Ok
+        UseCase->>TempFile: Create temp file
+        TempFile-->>UseCase: Ok(file)
+        
+        loop For each chunk
+            UseCase->>Stream: Write chunk
+            alt Write Success
+                Stream-->>UseCase: Ok
+            else Disk Full During Write
+                Stream-->>UseCase: IoError (ENOSPC)
+                UseCase->>Cleanup: Delete partial file
+                Cleanup-->>UseCase: Ok (best effort)
+                UseCase-->>UseCase: Return 507 with context
+            end
+        end
+        
+        UseCase->>UseCase: Continue with analysis
+    end
+```
+
+**Pre-Flight Disk Space Check:**
+
+Before creating temporary file for large content streaming, verify sufficient disk space is available.
+
+```mermaid
+graph TB
+    Content[Large Content] --> Check{Pre-flight Check}
+    
+    Check --> StatVfs[statvfs temp_dir]
+    StatVfs --> Available[Get available bytes]
+    Available --> Compare{available >= threshold?}
+    
+    Compare -->|No| Error507[507 Insufficient Storage]
+    Compare -->|Yes| Reserve{Can fit content?}
+    
+    Reserve -->|available >= content_size + threshold| Create[Create Temp File]
+    Reserve -->|available < content_size + threshold| Error507
+    
+    Create --> Stream[Stream Content]
+    
+    style Error507 fill:#ffe1e1
+    style Create fill:#e1ffe1
+```
+
+**Disk Space Check Algorithm:**
+
+1. Call `statvfs()` on temp directory to get filesystem stats
+2. Calculate: `available_mb = (f_bavail * f_frsize) / (1024 * 1024)`
+3. Get configured threshold: `min_free_space_mb` from config
+4. If `available_mb < min_free_space_mb`: reject request immediately
+5. If `available_mb >= min_free_space_mb`: proceed with temp file creation
+6. Additional check: `available_mb >= (content_size_mb + min_free_space_mb)` for safety margin
+
+**Configuration Parameter:**
+
+| Parameter | Config Key | Default | Purpose |
+|-----------|-----------|---------|---------|
+| Minimum Free Space | `analysis.min_free_space_mb` | 1024 MB (1 GB) | Disk space threshold for temp operations |
+
+**Error Mapping:**
+
+| Condition | Error Type | HTTP Status | Error Message | Client-Visible Details |
+|-----------|-----------|-------------|---------------|----------------------|
+| Pre-flight check fails | `InsufficientStorageError` | 507 | "Insufficient storage space for analysis" | Yes - actionable error |
+| Disk full during write | `IoError(ENOSPC)` → `InsufficientStorageError` | 507 | "Disk space exhausted during file processing" | Yes - explains failure point |
+| Partial file cleanup fails | Log warning only | 507 | Same as above | No - cleanup is best-effort |
+
+**Partial File Cleanup Strategy:**
+
+```mermaid
+stateDiagram-v2
+    [*] --> CreateFile: Start streaming
+    CreateFile --> Writing: File created
+    Writing --> Writing: Write chunks
+    Writing --> Complete: All written
+    Writing --> DiskFull: ENOSPC error
+    
+    Complete --> [*]: Success
+    
+    DiskFull --> Cleanup: Attempt delete
+    Cleanup --> CleanupSuccess: Delete succeeds
+    Cleanup --> CleanupFailed: Delete fails
+    
+    CleanupSuccess --> [*]: Return 507 error
+    CleanupFailed --> LogWarning: Log cleanup failure
+    LogWarning --> [*]: Return 507 error anyway
+```
+
+**Cleanup Requirements:**
+
+1. **On Write Failure:**
+   - Immediately close file handle
+   - Attempt to delete partial temporary file
+   - Use `std::fs::remove_file()` - returns `Result`
+
+2. **If Cleanup Succeeds:**
+   - Log info: "Deleted partial temp file after disk error: {path}"
+   - Return 507 error to client with descriptive message
+
+3. **If Cleanup Fails:**
+   - Log warning: "Failed to delete partial temp file: {path} - {error}"
+   - Rely on orphaned file cleanup (startup/background task)
+   - Still return 507 error to client (don't fail cleanup failure)
+
+4. **Best-Effort Guarantee:**
+   - Cleanup failure does NOT change client response
+   - Original write error is what matters
+   - Orphaned file cleanup handles missed files
+
+**Error Context Propagation:**
+
+Error messages must include context about which operation failed:
+
+```json
+{
+  "error": "Insufficient storage space for analysis",
+  "details": "Temp directory has 512MB available, but 1024MB minimum required",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+```json
+{
+  "error": "Disk space exhausted during file processing",
+  "details": "Failed to write chunk at offset 52428800 (50MB): No space left on device",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Implementation Location:**
+
+- **Pre-flight Check:** `application/use_cases/analyze_content.rs` - before creating temp file
+- **Disk Space Utility:** `infrastructure/filesystem/disk_space.rs` - `check_available_space(path: &Path) -> Result<u64>`
+- **Cleanup Logic:** RAII in temp file wrapper (`infrastructure/filesystem/temp_file.rs`)
+- **Error Types:** `domain/errors/storage_error.rs` - `InsufficientStorageError`
+
+**Platform-Specific Implementation:**
+
+Use `libc::statvfs` on Linux:
+
+```rust
+use std::os::unix::ffi::OsStrExt;
+use std::path::Path;
+use std::ffi::CString;
+
+pub fn get_available_space_mb(path: &Path) -> Result<u64, std::io::Error> {
+    let path_cstr = CString::new(path.as_os_str().as_bytes())?;
+    
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    let result = unsafe { libc::statvfs(path_cstr.as_ptr(), &mut stat) };
+    
+    if result != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    
+    // Available space in bytes: f_bavail * f_frsize
+    let available_bytes = stat.f_bavail * stat.f_frsize;
+    
+    // Convert to MB
+    Ok(available_bytes / (1024 * 1024))
+}
+```
+
+**Testing Requirements:**
+
+1. **Pre-flight Check Tests:**
+   - Mock filesystem with low space (< threshold)
+   - Verify 507 error returned immediately
+   - Verify no temp file created
+
+2. **Disk Full During Write Tests:**
+   - Simulate ENOSPC error during streaming
+   - Verify partial file is deleted
+   - Verify 507 error with correct context
+
+3. **Cleanup Failure Tests:**
+   - Simulate delete failure (permission denied)
+   - Verify warning is logged
+   - Verify 507 error still returned to client
+
+4. **Edge Cases:**
+   - Exact threshold boundary (available == threshold)
+   - Content size exactly fills remaining space
+   - Multiple concurrent requests depleting space
+
+**Error Response Examples:**
+
+Pre-flight check failure:
+```
+HTTP/1.1 507 Insufficient Storage
+Content-Type: application/json
+
+{
+  "error": "Insufficient storage space for analysis",
+  "details": "Temp directory has 512MB available, but 1024MB minimum required",
+  "request_id": "abc-123"
+}
+```
+
+Write failure:
+```
+HTTP/1.1 507 Insufficient Storage
+Content-Type: application/json
+
+{
+  "error": "Disk space exhausted during file processing",
+  "details": "Failed to write chunk at offset 52428800 (50MB): No space left on device",
+  "request_id": "abc-123"
+}
+```
+
+**Monitoring and Observability:**
+
+Metrics to track:
+- `disk_space_check_failures_total` - Counter for pre-flight rejections
+- `disk_space_write_failures_total` - Counter for ENOSPC during streaming
+- `partial_file_cleanup_failures_total` - Counter for cleanup failures
+- `temp_dir_available_space_mb` - Gauge for current available space
+
+Log entries:
+- INFO: Pre-flight check passed: {available_mb}MB available
+- WARN: Pre-flight check failed: {available_mb}MB < {threshold_mb}MB
+- ERROR: Disk full during write at offset {offset}: {error}
+- WARN: Failed to cleanup partial file {path}: {error}
 
 ---
 

@@ -230,6 +230,118 @@ Based on the current design, the following additional specifications might be be
 | Observability | Tracing + JSON logs | Structured logging with request correlation |
 | Configuration | TOML + env vars | Type-safe config with environment overrides |
 | Testing | Pyramid with property tests | Fast feedback with comprehensive coverage |
+| **Request Body Handling** | **Stream-direct to temp** | **Constant 64KB memory, early error detection, scalability** |
+
+#### Request Body Handling: Stream-Direct Approach (Adopted)
+
+**Decision:** Stream HTTP request bodies directly to temporary files instead of buffering in memory.
+
+**Alternatives Considered:**
+
+| Approach | Memory Usage | Complexity | Validation Timing | Decision |
+|----------|--------------|------------|-------------------|----------|
+| **Buffer-first** | High (100MB per request) | Simple | Before processing | ❌ Rejected |
+| **Stream-direct** | Low (64KB buffer only) | Complex | After partial write | ✅ Adopted |
+| **Hybrid** | Medium (varies by size) | Very Complex | Mixed | ⏸️ Deferred to v2 |
+
+**Detailed Comparison:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Buffer-First Approach (Rejected)                                │
+├─────────────────────────────────────────────────────────────────┤
+│ Flow: Client → Axum Buffer (100MB) → Handler → Temp File       │
+│                                                                  │
+│ Pros:                                                            │
+│  ✓ Simple implementation (Axum default)                        │
+│  ✓ Validation before any disk I/O                              │
+│  ✓ Fast for small files (no disk)                              │
+│                                                                  │
+│ Cons:                                                            │
+│  ✗ 100MB memory per request                                    │
+│  ✗ OOM risk under load (300 req × 100MB = 30GB)               │
+│  ✗ Memory scales with file size                                │
+│  ✗ Writes twice (buffer → temp)                                │
+│  ✗ Error detection after full upload                           │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ Stream-Direct Approach (Adopted) ✅                             │
+├─────────────────────────────────────────────────────────────────┤
+│ Flow: Client → Stream (64KB) → Temp File → Analysis            │
+│                                                                  │
+│ Pros:                                                            │
+│  ✓ Constant 64KB memory (regardless of file size)              │
+│  ✓ No OOM risk (300 req × 64KB = 19MB)                        │
+│  ✓ Predictable resource usage                                  │
+│  ✓ Writes once (direct to temp)                                │
+│  ✓ Early error detection (disk full during upload)             │
+│  ✓ Better backpressure handling                                │
+│  ✓ Production-ready scalability                                │
+│                                                                  │
+│ Cons:                                                            │
+│  ✗ Complex implementation (custom streaming)                   │
+│  ✗ All files use temp dir (even small)                         │
+│  ✗ Validation after partial write (requires cleanup)           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key Metrics (300 Concurrent 100MB Requests):**
+
+| Metric | Buffer-First | Stream-Direct | Improvement |
+|--------|--------------|---------------|-------------|
+| Peak Memory | 30GB | 19MB | **1579x less** |
+| Memory/Request | 100MB | 64KB | **1563x less** |
+| Writes per File | 2 (buffer + temp) | 1 (direct) | 50% fewer |
+| Error Detection | After upload | During upload | Earlier |
+| OOM Risk | High | None | Eliminated |
+
+**Adoption Rationale:**
+
+1. **Memory Efficiency (Critical Priority):**
+   - 64KB constant memory eliminates OOM risk
+   - Enables 1579x more concurrent requests with same memory
+   - Predictable resource usage simplifies capacity planning
+
+2. **Production Scalability (High Priority):**
+   - Memory does not scale with file size
+   - Supports higher connection limits
+   - Better behavior under load spikes
+
+3. **Error Detection (Medium Priority):**
+   - Disk full detected immediately
+   - Saves bandwidth (client stops uploading)
+   - Faster feedback to clients
+
+4. **Resource Efficiency (Medium Priority):**
+   - Single write instead of double write
+   - Better disk I/O utilization
+   - Reduced memory → disk transfer overhead
+
+**Trade-offs Accepted:**
+
+1. **Implementation Complexity:**
+   - Custom streaming logic required
+   - Error handling more complex (partial write cleanup)
+   - More test scenarios needed
+   - **Acceptable:** One-time development cost for long-term scalability
+
+2. **All Files Use Temp Directory:**
+   - Even small files (< 10MB) go through temp file
+   - Additional disk I/O for small files
+   - **Acceptable:** Small files still fast (<100ms), scalability more important
+
+3. **Validation After Partial Write:**
+   - Auth/validation happens after streaming starts
+   - Invalid requests waste some disk I/O
+   - Requires cleanup of partial files
+   - **Acceptable:** Pre-flight auth check mitigates, cleanup is automatic
+
+**Implementation Priority:** **High** - Foundational for production scalability
+
+**Status:** Adopted as primary design (not alternative)
+
+**Future Enhancement:** Hybrid approach (buffer small files < 10MB) deferred to v2.0 for optimization
 
 ### **5.3. Open Questions**
 

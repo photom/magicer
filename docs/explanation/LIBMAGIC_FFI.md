@@ -603,6 +603,622 @@ graph TB
 
 **Exception:** Panic during Drop itself (abort policy).
 
+### Mmap Integration with libmagic FFI
+
+Memory-mapped files provide zero-copy buffer access to libmagic through the FFI boundary.
+
+```mermaid
+sequenceDiagram
+    participant UseCase
+    participant MmapWrapper
+    participant LibC
+    participant MagicFFI
+    participant Libmagic
+    
+    UseCase->>MmapWrapper: create_mmap(temp_file)
+    MmapWrapper->>LibC: open(path, O_RDONLY)
+    LibC-->>MmapWrapper: fd
+    MmapWrapper->>LibC: mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0)
+    LibC-->>MmapWrapper: addr (*const u8)
+    
+    MmapWrapper->>MmapWrapper: Create slice: &[u8]
+    MmapWrapper-->>UseCase: &[u8] (mmap slice)
+    
+    UseCase->>MagicFFI: analyze_buffer(cookie, slice)
+    MagicFFI->>MagicFFI: slice.as_ptr() -> *const c_void
+    MagicFFI->>Libmagic: magic_buffer(cookie, ptr, len)
+    
+    Note over Libmagic: Reads directly from mmap
+    Note over Libmagic: No copy required
+    
+    Libmagic-->>MagicFFI: *const c_char
+    MagicFFI-->>UseCase: String (copied)
+    
+    UseCase->>MmapWrapper: Drop
+    MmapWrapper->>LibC: munmap(addr, size)
+    MmapWrapper->>LibC: close(fd)
+```
+
+**FFI Interface for Mmap:**
+
+```rust
+// Raw FFI call accepts any *const c_void
+extern "C" {
+    fn magic_buffer(
+        cookie: *const MagicT,
+        buffer: *const c_void,  // Can point to mmap or heap memory
+        length: size_t,
+    ) -> *const c_char;
+}
+
+// Safe wrapper accepts &[u8] from any source
+impl MagicCookie {
+    pub fn analyze_buffer(&self, data: &[u8]) -> Result<String> {
+        let ptr = data.as_ptr() as *const c_void;
+        let len = data.len();
+        
+        unsafe {
+            let result = magic_buffer(self.cookie, ptr, len);
+            // Convert C string to owned String
+            self.handle_result(result)
+        }
+    }
+}
+```
+
+**Key Properties:**
+
+| Property | Behavior | Benefit |
+|----------|----------|---------|
+| **Zero-Copy** | libmagic reads directly from mmap | No memory duplication |
+| **Unified Interface** | Same function for mmap and heap | Simple API |
+| **Pointer Lifetime** | Slice lifetime ensures mmap validity | Memory safe |
+| **Page Faults** | OS loads pages on-demand | Memory efficient |
+
+**Safety Guarantees:**
+
+1. **Lifetime Safety:**
+   ```rust
+   fn analyze_mmap(path: &Path) -> Result<String> {
+       let mmap = Mmap::open(path)?;       // Mmap created
+       let slice: &[u8] = mmap.as_ref();   // Slice borrows mmap
+       
+       // Safe: slice lifetime ⊆ mmap lifetime
+       let result = magic.analyze_buffer(slice)?;
+       
+       // Safe: mmap dropped after slice no longer used
+       Ok(result)
+   }
+   ```
+
+2. **Pointer Validity:**
+   - Slice pointer guaranteed valid during call
+   - Mmap wrapper holds file descriptor open
+   - No unmapping while libmagic reads
+
+3. **Read-Only Access:**
+   - `PROT_READ` ensures libmagic cannot modify
+   - `MAP_PRIVATE` isolates from other processes
+   - No aliasing concerns
+
+**Integration with Temp Files:**
+
+```rust
+pub struct TempFileAnalyzer {
+    temp_file: TempFile,
+    mmap: Option<Mmap>,
+}
+
+impl TempFileAnalyzer {
+    pub fn analyze(&mut self, magic: &MagicCookie) -> Result<String> {
+        // Create mmap
+        let mmap = Mmap::open(self.temp_file.path())?;
+        let data: &[u8] = mmap.as_ref();
+        
+        // Pass to libmagic via FFI
+        let result = magic.analyze_buffer(data)?;
+        
+        // Mmap automatically unmapped on drop
+        Ok(result)
+    }
+}
+```
+
+### File Descriptor Lifecycle in FFI Context
+
+File descriptors have complex lifecycle interactions between Rust RAII and C library usage.
+
+```mermaid
+stateDiagram-v2
+    [*] --> FdOpen: open() syscall
+    FdOpen --> FdActive: fd = 3
+    
+    state FdActive {
+        [*] --> Mmap: mmap(fd)
+        Mmap --> Reading: libmagic reads
+        Reading --> Mmap: Continue reading
+    }
+    
+    FdActive --> FdClose: close(fd)
+    FdClose --> [*]
+    
+    note right of Mmap
+        FD must remain open
+        during mmap lifetime
+    end note
+```
+
+**FD Ownership Patterns:**
+
+**1. Mmap Owns FD (Recommended):**
+
+```rust
+pub struct Mmap {
+    addr: *const u8,
+    len: usize,
+    fd: RawFd,  // Owned
+}
+
+impl Mmap {
+    pub fn open(path: &Path) -> Result<Self> {
+        // Open file - FD ownership transferred
+        let fd = unsafe {
+            libc::open(
+                path_cstr.as_ptr(),
+                libc::O_RDONLY,
+            )
+        };
+        
+        if fd < 0 {
+            return Err(io::Error::last_os_error().into());
+        }
+        
+        // Get file size
+        let len = get_file_size(fd)?;
+        
+        // Create mmap - requires FD
+        let addr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                len,
+                libc::PROT_READ,
+                libc::MAP_PRIVATE,
+                fd,  // FD used here
+                0,
+            )
+        };
+        
+        if addr == libc::MAP_FAILED {
+            unsafe { libc::close(fd); }
+            return Err(io::Error::last_os_error().into());
+        }
+        
+        Ok(Mmap { addr: addr as *const u8, len, fd })
+    }
+}
+
+impl Drop for Mmap {
+    fn drop(&mut self) {
+        unsafe {
+            // Unmap first
+            libc::munmap(self.addr as *mut c_void, self.len);
+            // Then close FD
+            libc::close(self.fd);
+        }
+    }
+}
+```
+
+**FD Lifecycle Rules:**
+
+| Phase | FD State | Mmap State | Libmagic Access |
+|-------|----------|------------|-----------------|
+| Before open | N/A | N/A | ❌ Cannot call |
+| FD open, no mmap | Valid | N/A | ✅ Can use `magic_file()` |
+| FD open, mmap active | Valid | Valid | ✅ Can use `magic_buffer()` on mmap |
+| After munmap | Valid | Invalid | ❌ Cannot use mmap data |
+| After close | Invalid | Invalid | ❌ Cannot access file |
+
+**2. Critical Ordering:**
+
+```rust
+// CORRECT: Unmap before closing FD
+impl Drop for Mmap {
+    fn drop(&mut self) {
+        unsafe {
+            libc::munmap(self.addr as *mut _, self.len);  // 1. Unmap first
+            libc::close(self.fd);                          // 2. Close FD
+        }
+    }
+}
+
+// INCORRECT: Closing FD before unmapping
+impl Drop for Mmap {
+    fn drop(&mut self) {
+        unsafe {
+            libc::close(self.fd);                          // ❌ Wrong order!
+            libc::munmap(self.addr as *mut _, self.len);  // FD already closed
+        }
+    }
+}
+```
+
+**3. FD Leakage Prevention:**
+
+```rust
+pub fn analyze_with_mmap_safe(path: &Path, magic: &MagicCookie) -> Result<String> {
+    // RAII ensures FD cleanup even on error
+    let mmap = Mmap::open(path)?;  // Opens FD
+    
+    // If this fails, Drop still runs
+    let result = magic.analyze_buffer(mmap.as_ref())?;
+    
+    // Drop runs: munmap() then close(fd)
+    Ok(result)
+}
+```
+
+**FD Limit Considerations:**
+
+```rust
+// Each mmap temporarily holds 1 FD
+// With 1000 concurrent requests:
+// - 1000 sockets
+// - ~500 temp files (large requests)
+// - ~500 FDs for mmap (same as temp files)
+// Total: ~2000 FDs
+
+// FD limit must account for:
+const REQUIRED_FDS: usize = 
+    MAX_CONNECTIONS +           // TCP sockets
+    (MAX_CONNECTIONS / 2) +     // Temp files (assume 50% large)
+    SYSTEM_FDS;                 // stdout, stderr, logs, etc.
+```
+
+### Platform-Specific Mmap Considerations
+
+Mmap behavior varies across platforms and filesystems.
+
+**Linux-Specific:**
+
+```rust
+#[cfg(target_os = "linux")]
+mod linux_mmap {
+    use libc::{mmap, MAP_PRIVATE, PROT_READ, MAP_POPULATE};
+    
+    pub fn create_optimized_mmap(fd: RawFd, len: usize) -> *const u8 {
+        unsafe {
+            mmap(
+                std::ptr::null_mut(),
+                len,
+                PROT_READ,
+                MAP_PRIVATE | MAP_POPULATE,  // Linux-specific: pre-fault pages
+                fd,
+                0,
+            ) as *const u8
+        }
+    }
+}
+```
+
+**Platform Comparison:**
+
+| Feature | Linux | macOS | Notes |
+|---------|-------|-------|-------|
+| **Max Mmap Size** | 128TB (64-bit) | 8TB | Architecture dependent |
+| **Page Size** | 4KB typical | 4KB/16KB | Affects alignment |
+| **`MAP_POPULATE`** | ✅ Supported | ❌ Not available | Linux pre-faulting |
+| **`MAP_PREFAULT_READ`** | ❌ Not available | ✅ Supported | macOS equivalent |
+| **Huge Pages** | ✅ `MAP_HUGETLB` | ❌ Limited | Linux 2MB/1GB pages |
+| **File Size Limits** | ext4: 16TB | APFS: 8EB | Filesystem dependent |
+
+**Filesystem-Specific Behavior:**
+
+| Filesystem | Mmap Support | Performance | Notes |
+|------------|-------------|-------------|-------|
+| **ext4** | ✅ Full | Excellent | Native Linux support |
+| **xfs** | ✅ Full | Excellent | Large file optimized |
+| **tmpfs** | ✅ Full | Best (RAM) | In-memory filesystem |
+| **NFS** | ⚠️ Limited | Poor | Network latency, cache issues |
+| **FUSE** | ⚠️ Limited | Variable | Depends on implementation |
+| **overlayfs** | ✅ Full | Good | Docker default |
+
+**Conditional Compilation:**
+
+```rust
+#[cfg(target_os = "linux")]
+pub fn mmap_flags() -> c_int {
+    libc::MAP_PRIVATE | libc::MAP_POPULATE
+}
+
+#[cfg(target_os = "macos")]
+pub fn mmap_flags() -> c_int {
+    // MAP_POPULATE not available on macOS
+    libc::MAP_PRIVATE
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+compile_error!("Unsupported platform for mmap");
+```
+
+**Page Alignment Requirements:**
+
+```rust
+pub fn get_page_size() -> usize {
+    unsafe {
+        libc::sysconf(libc::_SC_PAGESIZE) as usize
+    }
+}
+
+pub fn align_to_page(size: usize) -> usize {
+    let page_size = get_page_size();
+    (size + page_size - 1) & !(page_size - 1)
+}
+
+// Example usage
+fn create_mmap(fd: RawFd, file_size: usize) -> Result<Mmap> {
+    let page_size = get_page_size();
+    
+    // File size must be > 0
+    if file_size == 0 {
+        return Err(Error::InvalidFileSize);
+    }
+    
+    // Mmap size is file size (no need to align for PROT_READ)
+    let mmap_size = file_size;
+    
+    // ... mmap creation
+}
+```
+
+**NFS and Network Storage Warnings:**
+
+```rust
+pub fn is_network_filesystem(path: &Path) -> Result<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::ffi::CString;
+        let path_cstr = CString::new(path.as_os_str().as_bytes())?;
+        
+        let mut stat: libc::statfs = unsafe { std::mem::zeroed() };
+        let result = unsafe { libc::statfs(path_cstr.as_ptr(), &mut stat) };
+        
+        if result != 0 {
+            return Err(io::Error::last_os_error().into());
+        }
+        
+        // NFS magic number
+        const NFS_SUPER_MAGIC: i64 = 0x6969;
+        Ok(stat.f_type == NFS_SUPER_MAGIC)
+    }
+    
+    #[cfg(not(target_os = "linux"))]
+    {
+        // Conservative: assume might be network
+        Ok(false)
+    }
+}
+```
+
+### Signal Handling During FFI Calls (SIGBUS)
+
+Mmap operations can trigger SIGBUS when the underlying file is modified or truncated.
+
+```mermaid
+sequenceDiagram
+    participant Libmagic
+    participant Mmap
+    participant Kernel
+    participant SignalHandler
+    participant Cleanup
+    
+    Libmagic->>Mmap: Read byte at offset
+    Mmap->>Kernel: Page fault
+    
+    alt File Still Valid
+        Kernel->>Kernel: Load page from disk
+        Kernel-->>Mmap: Page loaded
+        Mmap-->>Libmagic: Return byte
+    else File Truncated/Deleted
+        Kernel->>SignalHandler: Deliver SIGBUS
+        Note over SignalHandler: Signal handler called
+        SignalHandler->>SignalHandler: Set error flag
+        SignalHandler-->>Kernel: Return from handler
+        Kernel-->>Libmagic: Return from page fault
+        Note over Libmagic: Sees corrupted data or error
+        Libmagic-->>Libmagic: Return NULL or error
+    end
+    
+    Libmagic->>Cleanup: munmap and cleanup
+```
+
+**SIGBUS Causes:**
+
+| Scenario | Trigger | Signal Delivered | Impact |
+|----------|---------|-----------------|---------|
+| File truncated | File shortened while mapped | SIGBUS | Read beyond new EOF |
+| File deleted | File removed while mapped | SIGBUS (sometimes) | Read attempts fail |
+| Disk full | Write to MAP_SHARED | SIGBUS | N/A (we use MAP_PRIVATE + PROT_READ) |
+| Hardware error | Bad disk sector | SIGBUS | Unrecoverable read error |
+| Network error | NFS server down | SIGBUS | Remote file unavailable |
+
+**Signal Handler Setup:**
+
+```rust
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+pub struct SigbusHandler {
+    error_flag: Arc<AtomicBool>,
+}
+
+impl SigbusHandler {
+    pub fn install() -> Result<Self> {
+        let error_flag = Arc::new(AtomicBool::new(false));
+        let flag_for_handler = error_flag.clone();
+        
+        unsafe {
+            let mut sa: libc::sigaction = std::mem::zeroed();
+            sa.sa_sigaction = Self::sigbus_handler as usize;
+            sa.sa_flags = libc::SA_SIGINFO;
+            
+            let result = libc::sigaction(
+                libc::SIGBUS,
+                &sa,
+                std::ptr::null_mut(),
+            );
+            
+            if result != 0 {
+                return Err(io::Error::last_os_error().into());
+            }
+        }
+        
+        // Store flag globally for signal handler access
+        SIGBUS_FLAG.store(
+            Arc::into_raw(flag_for_handler) as usize,
+            Ordering::SeqCst,
+        );
+        
+        Ok(SigbusHandler { error_flag })
+    }
+    
+    extern "C" fn sigbus_handler(
+        _sig: c_int,
+        _info: *mut libc::siginfo_t,
+        _ctx: *mut c_void,
+    ) {
+        // SAFETY: Minimal signal handler - just set flag
+        let flag_ptr = SIGBUS_FLAG.load(Ordering::SeqCst) as *const AtomicBool;
+        if !flag_ptr.is_null() {
+            unsafe {
+                (*flag_ptr).store(true, Ordering::SeqCst);
+            }
+        }
+    }
+    
+    pub fn check_error(&self) -> Result<()> {
+        if self.error_flag.load(Ordering::SeqCst) {
+            Err(Error::SigbusReceived)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+static SIGBUS_FLAG: AtomicUsize = AtomicUsize::new(0);
+```
+
+**Integration with Analysis:**
+
+```rust
+pub fn analyze_with_sigbus_protection(
+    magic: &MagicCookie,
+    mmap: &Mmap,
+) -> Result<String> {
+    // Install SIGBUS handler
+    let handler = SigbusHandler::install()?;
+    
+    // Perform analysis (may trigger SIGBUS)
+    let result = magic.analyze_buffer(mmap.as_ref());
+    
+    // Check if SIGBUS occurred
+    handler.check_error()?;
+    
+    // Return result
+    result
+}
+```
+
+**Signal Handler Constraints:**
+
+Signal handlers must be **async-signal-safe**. Allowed operations:
+
+✅ **Safe:**
+- Set atomic variables
+- Simple integer arithmetic
+- Check pointer for null
+
+❌ **Unsafe:**
+- Allocate memory (malloc, Box::new)
+- Acquire mutexes
+- Call most libc functions
+- Perform I/O
+- Format strings
+
+**Error Recovery:**
+
+```rust
+impl MagicCookie {
+    pub fn analyze_buffer_safe(&self, data: &[u8]) -> Result<String> {
+        // Clear any previous SIGBUS
+        SIGBUS_OCCURRED.store(false, Ordering::SeqCst);
+        
+        // Call libmagic (may trigger SIGBUS)
+        let result_ptr = unsafe {
+            magic_buffer(self.cookie, data.as_ptr() as *const c_void, data.len())
+        };
+        
+        // Check for SIGBUS
+        if SIGBUS_OCCURRED.load(Ordering::SeqCst) {
+            return Err(Error::MmapModified(
+                "File was modified during analysis (SIGBUS received)"
+            ));
+        }
+        
+        // Check for NULL result
+        if result_ptr.is_null() {
+            return self.get_error();
+        }
+        
+        // Safe to convert C string
+        unsafe {
+            let c_str = CStr::from_ptr(result_ptr);
+            Ok(c_str.to_str()?.to_owned())
+        }
+    }
+}
+```
+
+**Testing SIGBUS Handling:**
+
+```rust
+#[test]
+fn test_sigbus_handling() {
+    // Create temp file
+    let temp = NamedTempFile::new().unwrap();
+    temp.write_all(&vec![0u8; 1024]).unwrap();
+    
+    // Create mmap
+    let mmap = Mmap::open(temp.path()).unwrap();
+    
+    // Truncate file while mapped (triggers SIGBUS on next read)
+    temp.as_file().set_len(0).unwrap();
+    
+    // Try to analyze (should handle SIGBUS gracefully)
+    let result = magic.analyze_buffer(mmap.as_ref());
+    
+    // Should return error, not crash
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("SIGBUS") ||
+            result.unwrap_err().to_string().contains("modified"));
+}
+```
+
+**Alternative: Avoid SIGBUS with MAP_PRIVATE:**
+
+Our use of `MAP_PRIVATE` with `PROT_READ` significantly reduces SIGBUS risk:
+
+- **MAP_PRIVATE:** Copy-on-write isolates us from modifications
+- **PROT_READ:** We never write, so no write-related SIGBUS
+- **File deletion:** File data remains accessible via inode until unmapped
+
+However, SIGBUS still possible for:
+- File truncation beyond mapped region
+- Hardware errors
+- Network filesystem issues
+
+**Therefore:** Signal handler still recommended for production robustness.
+
 ---
 
 ## Configuration Design
@@ -765,6 +1381,269 @@ graph TB
 | Resource exhaustion | Size limits + connection limits |
 | Directory traversal | Path sandbox validation |
 | Use-after-free | Rust ownership prevents |
+
+### Memory-Mapped I/O Security
+
+When analyzing large files via memory-mapped I/O, strict security requirements prevent memory corruption and unauthorized access.
+
+```mermaid
+graph TB
+    TempFile[Temporary File] --> Create[Create with 0600]
+    Create --> FD[Open File Descriptor]
+    FD --> Mmap[mmap System Call]
+    
+    Mmap --> Flags{Validate Flags}
+    
+    Flags --> F1[PROT_READ]
+    Flags --> F2[MAP_PRIVATE]
+    Flags --> F3[No PROT_WRITE]
+    Flags --> F4[No PROT_EXEC]
+    
+    F1 --> Check{All Correct?}
+    F2 --> Check
+    F3 --> Check
+    F4 --> Check
+    
+    Check -->|Yes| Pass[Pass to libmagic]
+    Check -->|No| Panic[Security Violation]
+    
+    Pass --> Analyze[Analyze Buffer]
+    Analyze --> Unmap[munmap]
+    Unmap --> Delete[Delete Temp File]
+    
+    style F1 fill:#e1ffe1
+    style F2 fill:#e1ffe1
+    style F3 fill:#e1ffe1
+    style F4 fill:#e1ffe1
+    style Panic fill:#ffe1e1
+```
+
+**Required mmap Flags:**
+
+| Flag | Value | Security Purpose |
+|------|-------|------------------|
+| `PROT_READ` | Read permission | Only flag allowed - prevents writes |
+| `MAP_PRIVATE` | Private mapping | Copy-on-write isolation from other processes |
+| No `PROT_WRITE` | Write denied | Prevents file corruption and tampering |
+| No `PROT_EXEC` | Execute denied | Prevents code injection attacks |
+
+**Security Requirements:**
+
+1. **Read-Only Mapping**
+   ```rust
+   // REQUIRED: Only PROT_READ permission
+   let prot = libc::PROT_READ;
+   // FORBIDDEN: Never include PROT_WRITE or PROT_EXEC
+   ```
+   - Write attempts trigger SIGSEGV
+   - Prevents modification of temporary file during analysis
+   - Hardware-enforced memory protection
+
+2. **Private Copy-on-Write**
+   ```rust
+   // REQUIRED: MAP_PRIVATE for isolation
+   let flags = libc::MAP_PRIVATE;
+   // FORBIDDEN: Never use MAP_SHARED
+   ```
+   - Process-local mapping
+   - Changes not visible to other processes
+   - Protects against shared memory attacks
+
+3. **No Execute Permission**
+   ```rust
+   // REQUIRED: Exclude PROT_EXEC
+   let prot = libc::PROT_READ; // Never OR with PROT_EXEC
+   ```
+   - Memory cannot contain executable code
+   - Prevents ROP (Return-Oriented Programming) exploits
+   - Defense against code injection
+
+4. **SIGBUS Signal Handling**
+   - Raised when mapped file is modified concurrently
+   - Raised when mapped file is truncated
+   - Raised when accessing beyond file size
+   - Must gracefully handle and clean up
+
+**FFI Integration Pattern:**
+
+```mermaid
+sequenceDiagram
+    participant UseCase
+    participant MmapWrapper
+    participant LibC
+    participant Libmagic
+    participant SignalHandler
+    
+    UseCase->>MmapWrapper: create(file, size)
+    MmapWrapper->>LibC: open(path, O_RDONLY)
+    LibC-->>MmapWrapper: fd
+    
+    MmapWrapper->>LibC: mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0)
+    LibC-->>MmapWrapper: addr
+    
+    MmapWrapper->>MmapWrapper: Validate flags at compile time
+    MmapWrapper-->>UseCase: Ok(&[u8])
+    
+    UseCase->>Libmagic: magic_buffer(cookie, slice.as_ptr(), slice.len())
+    
+    alt File Modified During Analysis
+        Libmagic->>LibC: Read mapped memory
+        LibC->>SignalHandler: SIGBUS signal
+        SignalHandler->>MmapWrapper: Set error flag
+        SignalHandler-->>Libmagic: Return from signal
+        Libmagic-->>UseCase: NULL (error)
+        UseCase->>MmapWrapper: Drop (munmap)
+    else Normal Operation
+        Libmagic-->>UseCase: Result string
+        UseCase->>MmapWrapper: Drop (munmap)
+    end
+    
+    MmapWrapper->>LibC: munmap(addr, size)
+    MmapWrapper->>LibC: close(fd)
+```
+
+**Implementation Requirements:**
+
+```rust
+// Compile-time flag validation
+const MMAP_PROT: c_int = libc::PROT_READ;
+const MMAP_FLAGS: c_int = libc::MAP_PRIVATE;
+
+// Ensure no write or execute permissions
+const _: () = assert!(MMAP_PROT & libc::PROT_WRITE == 0);
+const _: () = assert!(MMAP_PROT & libc::PROT_EXEC == 0);
+```
+
+**Threat Model:**
+
+| Threat | Attack Vector | Mitigation |
+|--------|--------------|------------|
+| Memory Corruption | Write to mapped region | PROT_READ prevents writes (SIGSEGV) |
+| Code Injection | Execute from mapped memory | No PROT_EXEC prevents execution |
+| Shared Memory Attack | MAP_SHARED allows IPC | MAP_PRIVATE isolates process |
+| Timing Attacks | Page fault side-channels | Read-only mapping reduces leakage |
+| Concurrent Modification | File changed during analysis | SIGBUS handler + MAP_PRIVATE |
+| Privilege Escalation | Exploit via mmap flags | Compile-time validation |
+
+**Testing Requirements:**
+
+1. **Flag Validation Tests**
+   - Verify compile-time assertions catch invalid flags
+   - Runtime check for flag correctness
+   - Negative tests attempting PROT_WRITE
+
+2. **SIGBUS Handler Tests**
+   - Simulate file modification during mmap
+   - Verify graceful error handling
+   - Check cleanup occurs correctly
+
+3. **Security Tests**
+   - Attempt write to mapped memory (expect SIGSEGV)
+   - Attempt execute from mapped memory (expect SIGSEGV/SIGILL)
+   - Verify MAP_PRIVATE isolation
+
+4. **Integration with libmagic**
+   - Test large file analysis via mmap
+   - Verify buffer pointer lifetime safety
+   - Check error propagation from libmagic
+
+**Platform-Specific Notes:**
+
+- **Linux:** Full support for all flags
+- **Page Size:** Use `sysconf(_SC_PAGESIZE)` for alignment
+- **File Size:** Handle files larger than address space
+- **Kernel Version:** Requires Linux 2.6+ for full mmap support
+
+**File Permissions:**
+
+Temporary files must have restrictive permissions:
+
+```rust
+// Create file with owner-only access (0600)
+let file = OpenOptions::new()
+    .create(true)
+    .write(true)
+    .mode(0o600)  // rw-------
+    .open(path)?;
+```
+
+Prevents unauthorized access to temporary file contents during analysis window.
+
+**Cleanup on Error:**
+
+```mermaid
+stateDiagram-v2
+    [*] --> MmapCreate: Create mapping
+    MmapCreate --> Analysis: Success
+    Analysis --> Cleanup: Complete
+    Cleanup --> [*]: Delete file
+    
+    MmapCreate --> ErrorCleanup: mmap fails
+    Analysis --> ErrorCleanup: SIGBUS or error
+    ErrorCleanup --> Munmap: Unmap if mapped
+    Munmap --> Delete: Delete temp file
+    Delete --> [*]: Return error
+```
+
+All error paths must ensure:
+1. Memory is unmapped if mmap succeeded
+2. File descriptor is closed
+3. Temporary file is deleted
+4. No resource leaks
+
+**Performance Impact:**
+
+- mmap overhead: ~1-10μs (much less than analysis time)
+- No memory copy required (zero-copy from kernel)
+- Page faults on first access (demand paging)
+- Kernel page cache benefits (repeated access)
+
+**Safe Wrapper Type:**
+
+```rust
+pub struct MmapBuffer {
+    addr: *const u8,
+    len: usize,
+    fd: RawFd,
+    _phantom: PhantomData<*const u8>, // !Send + !Sync
+}
+
+impl Drop for MmapBuffer {
+    fn drop(&mut self) {
+        unsafe {
+            libc::munmap(self.addr as *mut _, self.len);
+            libc::close(self.fd);
+        }
+    }
+}
+
+impl AsRef<[u8]> for MmapBuffer {
+    fn as_ref(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.addr, self.len) }
+    }
+}
+```
+
+**Signal Handler Setup:**
+
+```rust
+// Install SIGBUS handler for mmap errors
+unsafe fn install_sigbus_handler() {
+    let mut sa: libc::sigaction = std::mem::zeroed();
+    sa.sa_sigaction = sigbus_handler as usize;
+    sa.sa_flags = libc::SA_SIGINFO;
+    libc::sigaction(libc::SIGBUS, &sa, std::ptr::null_mut());
+}
+
+extern "C" fn sigbus_handler(
+    _sig: c_int,
+    _info: *mut libc::siginfo_t,
+    _ctx: *mut c_void,
+) {
+    // Mark error state and return
+    // Cleanup handled by Drop trait
+}
+```
 
 ---
 
