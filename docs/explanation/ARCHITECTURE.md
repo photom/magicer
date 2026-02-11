@@ -317,39 +317,36 @@ src/presentation/
 classDiagram
     class MagicResult {
         <<Entity>>
-        +request_id: RequestId
-        +filename: WindowsCompatibleFilename
-        +mime_type: MimeType
-        +description: String
+        request_id
+        filename
+        mime_type
+        description
     }
     
     class WindowsCompatibleFilename {
         <<Value Object>>
-        +value: String
-        +new(String) Result
+        value
     }
     
     class RelativePath {
         <<Value Object>>
-        +value: String
-        +new(String) Result
+        value
     }
     
     class RequestId {
         <<Value Object>>
-        +value: UUID
-        +generate() RequestId
+        value
     }
     
     class MagicRepository {
         <<Trait>>
-        +analyze_buffer(bytes, filename) Result
-        +analyze_file(path) Result
+        analyze_buffer
+        analyze_file
     }
     
     class AuthenticationService {
         <<Trait>>
-        +verify_credentials(credentials) Result
+        verify_credentials
     }
     
     MagicResult --> WindowsCompatibleFilename
@@ -376,15 +373,15 @@ classDiagram
 
 **MagicRepository Unified Interface:**
 
-The `MagicRepository` trait uses a unified interface that accepts `&[u8]` regardless of data source:
+The MagicRepository trait uses a unified interface that accepts a byte slice regardless of data source:
 
 ```mermaid
 graph TB
-    Memory[In-Memory Vec] --> Slice1[&[u8]]
-    Mmap[Memory-Mapped File] --> Slice2[&[u8]]
-    Static[Static Data] --> Slice3[&[u8]]
+    Memory[In-Memory Vec] --> Slice1[Byte Slice]
+    Mmap[Memory-Mapped File] --> Slice2[Byte Slice]
+    Static[Static Data] --> Slice3[Byte Slice]
     
-    Slice1 --> Trait[MagicRepository::analyze_buffer]
+    Slice1 --> Trait[MagicRepository analyze_buffer]
     Slice2 --> Trait
     Slice3 --> Trait
     
@@ -399,12 +396,12 @@ graph TB
 
 | Method | Signature | Accepts | Purpose |
 |--------|-----------|---------|---------|
-| `analyze_buffer` | `(&self, data: &[u8], filename: &str) -> Result<MagicResult>` | Any byte slice | Analyzes binary data from any source |
-| `analyze_file` | `(&self, path: &Path) -> Result<MagicResult>` | File path | Analyzes file by path (libmagic opens file) |
+| analyze_buffer | analyze_buffer(data, filename) | Any byte slice | Analyzes binary data from any source |
+| analyze_file | analyze_file(path) | File path | Analyzes file by path (libmagic opens file) |
 
-**Unified `&[u8]` Acceptance:**
+**Unified Byte Slice Acceptance:**
 
-The `analyze_buffer` method accepts byte slices from any source without distinction:
+The analyze_buffer method accepts byte slices from any source without distinction:
 
 1. **In-Memory Buffers** - Small files (< 10MB) held in `Vec<u8>` or `Bytes`
 2. **Memory-Mapped Slices** - Large files (≥ 10MB) mapped via `mmap()` 

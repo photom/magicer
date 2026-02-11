@@ -56,15 +56,13 @@ graph TD
 ```mermaid
 classDiagram
     class AnalyzeContentRequest {
-        +content: Bytes
-        +filename: WindowsCompatibleFilename
-        +new(content: Bytes, filename: WindowsCompatibleFilename) Self
-        +content() &Bytes
-        +filename() &WindowsCompatibleFilename
+        content
+        filename
+        new
     }
     
     class Bytes {
-        <<external::bytes>>
+        <<external>>
     }
     
     class WindowsCompatibleFilename {
@@ -81,16 +79,16 @@ classDiagram
 
 | Property | Type | Description | Validation |
 |----------|------|-------------|------------|
-| `content` | `Bytes` | Binary file content | Max 100MB (enforced at HTTP layer) |
-| `filename` | `WindowsCompatibleFilename` | Original filename | Value object validation |
+| content | Binary Data | Binary file content | Max 100MB (enforced at HTTP layer) |
+| filename | Filename | Original filename | Value object validation |
 
 ### Methods
 
 | Method | Parameters | Return Type | Description |
 |--------|------------|-------------|-------------|
-| `new` | `content: Bytes, filename: WindowsCompatibleFilename` | `Self` | Constructor |
-| `content` | `&self` | `&Bytes` | Get content reference |
-| `filename` | `&self` | `&WindowsCompatibleFilename` | Get filename reference |
+| new | content, filename | Self | Constructor |
+| content | self | Data reference | Get content reference |
+| filename | self | Filename reference | Get filename reference |
 
 ## Usage Pattern
 
@@ -114,22 +112,22 @@ The system uses a strict mapping approach to maintain layer isolation:
 3. **Output Mapping**: Domain entities are transformed into response DTOs.
 4. **Serialization**: Response DTOs are serialized into JSON format.
 
-Serialization is controlled via standard attributes to handle optional fields (omitting null values from JSON) and formatting timestamps consistently using the ISO 8601 standard.
+Serialization is controlled via standard mechanisms to handle optional fields (omitting empty values from JSON) and formatting timestamps consistently using the ISO 8601 standard.
 
 ### Serialization Options
 
 | Option | Usage | Purpose |
 |--------|-------|---------|
-| `#[serde(skip_serializing_if = "Option::is_none")]` | Optional fields | Omit `null` from JSON |
-| `#[serde(rename = "mime_type")]` | Field naming | Control JSON key names |
-| `#[serde(with = "chrono::serde::ts_seconds")]` | Timestamp format | Unix timestamp instead of ISO 8601 |
+| Skip if empty | Optional fields | Omit missing values from JSON |
+| Rename field | Field naming | Control JSON key names |
+| Timestamp format | Timestamp format | Consistent time representation |
 
 ## Dependencies
 
 ```mermaid
 graph TD
     DTO[Application DTOs] --> Domain[Domain Value Objects]
-    DTO --> External[External Crates]
+    DTO --> External[External Components]
     
     Domain --> Filename[WindowsCompatibleFilename]
     Domain --> Path[RelativePath]
@@ -137,9 +135,9 @@ graph TD
     Domain --> Mime[MimeType]
     Domain --> Result[MagicResult]
     
-    External --> Bytes[bytes::Bytes]
-    External --> Chrono[chrono::DateTime]
-    External --> Serde[serde Serialize/Deserialize]
+    External --> Bytes[Binary Container]
+    External --> Chrono[Time Management]
+    External --> Serde[Serialization Framework]
     
     style DTO fill:#FFF3E0
     style Domain fill:#F3E5F5

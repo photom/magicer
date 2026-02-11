@@ -23,23 +23,23 @@ The Axum router configuration defines all HTTP routes, applies middleware layers
 ```mermaid
 classDiagram
     class Router {
-        +route(path: &str, method_router: MethodRouter) Self
-        +layer(layer: L) Self
-        +with_state(state: S) Router
+        route
+        layer
+        with_state
     }
     
     class AppState {
-        +analyze_content_use_case: Arc~AnalyzeContentUseCase~
-        +analyze_path_use_case: Arc~AnalyzePathUseCase~
-        +health_check_use_case: Arc~HealthCheckUseCase~
-        +auth_service: Arc~dyn AuthenticationService~
+        analyze_content_use_case
+        analyze_path_use_case
+        health_check_use_case
+        auth_service
     }
     
     class MethodRouter {
-        +get(handler: H) Self
-        +post(handler: H) Self
-        +put(handler: H) Self
-        +delete(handler: H) Self
+        get
+        post
+        put
+        delete
     }
     
     Router *-- AppState : contains

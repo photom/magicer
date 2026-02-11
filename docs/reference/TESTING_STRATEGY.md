@@ -225,35 +225,35 @@ graph TB
 
 | Scenario | Mock Behavior | Expected Result |
 |----------|---------------|-----------------|
-| Small content (< threshold) | Return (MimeType, description) | Success, direct buffer analysis |
-| Large content (≥ threshold) | Return (MimeType, description) | Success, temp file + mmap |
-| Repository failure | Return MagicError | ApplicationError::MagicAnalysis |
-| Empty content | N/A (caught before repository call) | ApplicationError::Validation |
-| Timeout during analysis | Timeout after 30s | ApplicationError::Timeout |
+| Small content (< threshold) | Return detected type and description | Success, direct buffer analysis |
+| Large content (≥ threshold) | Return detected type and description | Success, temp file + mmap |
+| Repository failure | Return analysis error | Application layer analysis error |
+| Empty content | N/A (caught before repository call) | Validation error |
+| Timeout during analysis | Timeout after 30s | Timeout error |
 | Large payload (100MB) | Return success | Success (boundary test) |
-| Temp file creation fails | Disk full scenario | ApplicationError::InsufficientStorage |
-| Temp file cleanup on error | Mock returns error | Temp file still deleted (RAII) |
+| Temp file creation fails | Disk full scenario | Insufficient storage error |
+| Temp file cleanup on error | Mock returns error | Temp file still deleted |
 | Concurrent large files | Multiple parallel requests | All succeed, no file conflicts |
 
 **AnalyzePathUseCase Test Scenarios:**
 
 | Scenario | Mock Behavior | Expected Result |
 |----------|---------------|-----------------|
-| Valid file path | Return (MimeType, description) | Success with response DTO |
-| File not found | N/A (filesystem check fails first) | ApplicationError::NotFound |
-| Path outside sandbox | N/A (validation rejects before repository) | ApplicationError::Validation |
-| Repository failure | Return MagicError | ApplicationError::MagicAnalysis |
+| Valid file path | Return detected type and description | Success with response |
+| File not found | N/A (filesystem check fails first) | Not found error |
+| Path outside sandbox | N/A (validation rejects before repository) | Validation error |
+| Repository failure | Return analysis error | Application layer analysis error |
 
 **Mock Strategy:**
 
-- Use `mockall` crate to generate mock implementations of repository traits
+- Use a mock generation framework to create mock implementations of repository traits
 - Configure mock expectations for specific test scenarios
 - Verify mock methods called with correct parameters
 - Test both success and failure paths
 
 ### 4.3. Large Content Handling Testing
 
-**Test Location:** `tests/unit/application/use_cases/large_content_tests.rs`
+**Test Location:** tests/unit/application/use_cases/large_content_tests.rs
 
 #### Unit Tests with Mocks
 
@@ -268,7 +268,7 @@ graph TB
 
 #### Integration Tests
 
-**Test Location:** `tests/integration/large_content_tests.rs`
+**Test Location:** tests/integration/large_content_tests.rs
 
 | Test Case | Input | Expected Behavior |
 |-----------|-------|-------------------|
@@ -276,14 +276,14 @@ graph TB
 | At threshold (10MB) | Binary content | File-based analysis triggered |
 | Large file (50MB) | PDF content | Streamed to temp, mmap analysis |
 | Very large (100MB) | Max size payload | Success with file-based analysis |
-| Disk full scenario | Mock filesystem full | 507 Insufficient Storage error |
+| Disk full scenario | Mock filesystem full | Insufficient Storage error |
 | Mmap failure | Mock mmap error | Graceful error handling |
 | Temp dir missing | Missing directory | Automatic creation or clear error |
-| Permission denied | Read-only temp dir | 500 Internal Server Error |
+| Permission denied | Read-only temp dir | Internal server error |
 
 #### Resource Management Tests
 
-**Test Location:** `tests/integration/resource_management_tests.rs`
+**Test Location:** tests/integration/resource_management_tests.rs
 
 ```mermaid
 graph TB
@@ -304,13 +304,13 @@ graph TB
 |-----------|----------|--------------|
 | Serial cleanup | Process 100 requests serially | Zero temp files remain |
 | Concurrent cleanup | 50 concurrent large requests | All temp files cleaned |
-| Panic during analysis | Force panic in analysis | Drop runs, file deleted |
+| Panic during analysis | Force panic in analysis | Cleanup routine runs, file deleted |
 | Timeout with cleanup | Request times out | Temp file cleaned before timeout response |
 | Orphaned file detection | Manually create old temp files | Background cleanup removes them |
 
 #### Performance Tests
 
-**Test Location:** `benches/large_content_benchmark.rs`
+**Test Location:** benches/large_content_benchmark.rs
 
 | Benchmark | Input Size | Measured Metric |
 |-----------|-----------|-----------------|
@@ -379,7 +379,7 @@ All error message tests must verify:
 4. ✅ **Human Readable:** Error message is clear and actionable
 5. ✅ **Consistent Format:** Follows `"Failed to {operation}: {cause}"` pattern
 6. ✅ **No Swallowing:** Context preserved across layer boundaries
-7. ✅ **No Generic Messages:** Avoids "Error", "Failed", "Operation failed" without context
+7. ✅ **No Generic Messages:** Avoids generic errors without context
 
 
 ---
@@ -411,28 +411,28 @@ graph TB
 
 | Component | Test Path | Property Framework |
 |-----------|-----------|-------------------|
-| WindowsCompatibleFilename | `tests/property/filename_validation_tests.rs` | proptest |
-| RelativePath | `tests/property/path_validation_tests.rs` | proptest |
-| RequestId | `tests/property/request_id_tests.rs` | proptest |
+| WindowsCompatibleFilename | tests/property/filename_validation_tests.rs | proptest |
+| RelativePath | tests/property/path_validation_tests.rs | proptest |
+| RequestId | tests/property/request_id_tests.rs | proptest |
 
 **WindowsCompatibleFilename Properties:**
 
 | Property | Generator Strategy | Invariant |
 |----------|-------------------|-----------|
-| Valid filenames accepted | Strings without `/` or `\0`, length 1-310 | Constructor returns Ok |
-| Invalid char rejected | Insert `/` or `\0` into valid string | Constructor returns Err(InvalidCharacter) |
-| Length limit enforced | Generate strings of length 311-500 | Constructor returns Err(ExceedsMaxLength) |
-| Empty rejected | Empty string | Constructor returns Err(EmptyValue) |
-| Unicode supported | Generate Unicode strings (no `/`, `\0`) | Constructor returns Ok |
+| Valid filenames accepted | Strings without forward slash or null byte, length 1-310 | Constructor returns success |
+| Invalid char rejected | Insert forward slash or null byte into valid string | Constructor returns invalid character error |
+| Length limit enforced | Generate strings of length 311-500 | Constructor returns exceeds max length error |
+| Empty rejected | Empty string | Constructor returns empty value error |
+| Unicode supported | Generate Unicode strings (no slash or null) | Constructor returns success |
 
 **RelativePath Properties:**
 
 | Property | Generator Strategy | Invariant |
 |----------|-------------------|-----------|
-| Valid relative paths accepted | Join 1-5 alphanumeric segments with `/` | Constructor returns Ok |
-| Absolute paths rejected | Prepend `/` to valid path | Constructor returns Err(AbsolutePath) |
-| Parent traversal rejected | Insert `..` into path segments | Constructor returns Err(PathTraversal) |
-| Double slash rejected | Insert `//` into path | Constructor returns Err(InvalidPath) |
+| Valid relative paths accepted | Join 1-5 alphanumeric segments with forward slash | Constructor returns success |
+| Absolute paths rejected | Prepend forward slash to valid path | Constructor returns absolute path error |
+| Parent traversal rejected | Insert .. into path segments | Constructor returns path traversal error |
+| Double slash rejected | Insert // into path | Constructor returns invalid path error |
 
 **Property Test Benefits:**
 
@@ -443,7 +443,7 @@ graph TB
 
 **Shrinking Strategy:**
 
-When a property test fails, proptest automatically shrinks the input to find the minimal failing case:
+When a property test fails, the framework automatically shrinks the input to find the minimal failing case:
 
 1. Generate random input that violates property
 2. Iteratively simplify input while preserving failure
@@ -507,15 +507,15 @@ sequenceDiagram
     participant Filesystem
     
     Test->>Test: Start real server
-    Test->>Server: HTTP POST /v1/magic/content
+    Test->>Server: HTTP POST content endpoint
     Server->>Server: Apply all middleware
     Server->>Server: Authenticate
     Server->>Server: Execute use case
     Server->>Libmagic: Analyze buffer
-    Libmagic-->>Server: MIME type + description
+    Libmagic-->>Server: detected type + description
     Server-->>Test: JSON response
     Test->>Test: Assert response correctness
-    Test->>Server: HTTP GET /v1/ping
+    Test->>Server: HTTP GET ping endpoint
     Server-->>Test: pong response
     Test->>Test: Shutdown server
     
@@ -525,23 +525,23 @@ sequenceDiagram
 
 **E2E Test Locations:**
 
-`tests/e2e/full_workflow_tests.rs`
+tests/e2e/full_workflow_tests.rs
 
 **E2E Test Scenarios:**
 
 | Workflow | Steps | Verification |
 |----------|-------|--------------|
-| Analyze content workflow | 1. Start server<br/>2. POST binary to /v1/magic/content<br/>3. Verify response | 200 OK with correct MIME type and request_id |
-| Large file analysis | 1. Start server<br/>2. POST 50MB file<br/>3. Monitor temp directory<br/>4. Verify cleanup | 200 OK, temp file cleaned after response |
-| Concurrent large files | 1. Start server<br/>2. POST 10 x 20MB files in parallel<br/>3. All complete | All succeed with unique request_ids |
-| Analyze path workflow | 1. Start server<br/>2. Create file in sandbox<br/>3. POST to /v1/magic/path<br/>4. Verify response | 200 OK with analysis result |
-| Health check workflow | 1. Start server<br/>2. GET /v1/ping<br/>3. Verify response | 200 OK with "pong" message |
-| Authentication failure | 1. Start server<br/>2. POST without auth<br/>3. Verify rejection | 401 Unauthorized |
-| Path traversal prevention | 1. Start server<br/>2. POST with malicious path<br/>3. Verify rejection | 400 Bad Request or 403 Forbidden |
+| Analyze content workflow | 1. Start server<br/>2. POST binary to content endpoint<br/>3. Verify response | Success with correct type and request ID |
+| Large file analysis | 1. Start server<br/>2. POST 50MB file<br/>3. Monitor temp directory<br/>4. Verify cleanup | Success, temp file cleaned after response |
+| Concurrent large files | 1. Start server<br/>2. POST 10 x 20MB files in parallel<br/>3. All complete | All succeed with unique request IDs |
+| Analyze path workflow | 1. Start server<br/>2. Create file in sandbox<br/>3. POST to path endpoint<br/>4. Verify response | Success with analysis result |
+| Health check workflow | 1. Start server<br/>2. GET ping endpoint<br/>3. Verify response | Success with pong message |
+| Authentication failure | 1. Start server<br/>2. POST without auth<br/>3. Verify rejection | Unauthorized error |
+| Path traversal prevention | 1. Start server<br/>2. POST with malicious path<br/>3. Verify rejection | Bad request or forbidden error |
 
 **E2E Test Characteristics:**
 
-- Use real HTTP client (reqwest)
+- Use real HTTP client
 - Start actual server process
 - Use real libmagic library
 - No mocked components
@@ -587,32 +587,32 @@ graph TB
 
 | Test Category | Test Path | Focus Area |
 |---------------|-----------|------------|
-| Path Traversal | `tests/security/path_traversal_tests.rs` | File system security boundaries |
-| Authentication | `tests/security/auth_security_tests.rs` | Credential validation and timing attacks |
-| Input Validation | `tests/security/input_validation_tests.rs` | Injection attack prevention |
-| Rate Limiting | `tests/security/rate_limit_tests.rs` | DoS prevention (future) |
+| Path Traversal | tests/security/path_traversal_tests.rs | File system security boundaries |
+| Authentication | tests/security/auth_security_tests.rs | Credential validation and timing attacks |
+| Input Validation | tests/security/input_validation_tests.rs | Injection attack prevention |
+| Rate Limiting | tests/security/rate_limit_tests.rs | DoS prevention (future) |
 
 **Path Traversal Test Cases:**
 
 | Attack Vector | Input Example | Expected Behavior |
 |---------------|---------------|-------------------|
-| Parent traversal | `../etc/passwd` | 400 Bad Request |
-| Multi-level traversal | `../../etc/passwd` | 400 Bad Request |
-| Hidden traversal | `data/../../etc/passwd` | 400 Bad Request |
-| Deep traversal | `data/../../../etc/passwd` | 400 Bad Request |
-| Encoded traversal | `%2e%2e%2fetc%2fpasswd` | 400 Bad Request |
-| Mixed separators | `..\etc\passwd` | 400 Bad Request (if applicable) |
-| Symlink escape | Symlink pointing to `/etc` | 403 Forbidden |
+| Parent traversal | ../etc/passwd | Bad Request |
+| Multi-level traversal | ../../etc/passwd | Bad Request |
+| Hidden traversal | data/../../etc/passwd | Bad Request |
+| Deep traversal | data/../../../etc/passwd | Bad Request |
+| Encoded traversal | URL encoded dots and slashes | Bad Request |
+| Mixed separators | Backslashes and slashes | Bad Request |
+| Symlink escape | Symlink pointing outside sandbox | Forbidden |
 
 **Authentication Security Tests:**
 
 | Test Case | Scenario | Expected Behavior |
 |-----------|----------|-------------------|
-| Missing header | No Authorization header | 401 Unauthorized |
-| Invalid credentials | Wrong username/password | 401 Unauthorized |
-| Malformed header | Invalid Base64 encoding | 400 Bad Request |
-| Empty credentials | Empty username or password | 401 Unauthorized |
-| Long credentials | Very long username/password | 400 Bad Request or 401 |
+| Missing header | No Authorization header | Unauthorized |
+| Invalid credentials | Wrong username/password | Unauthorized |
+| Malformed header | Invalid Base64 encoding | Bad Request |
+| Empty credentials | Empty username or password | Unauthorized |
+| Long credentials | Very long username/password | Bad Request or Unauthorized |
 | Timing attack | Measure comparison time | Constant-time verification |
 
 **Timing Attack Test Strategy:**
@@ -635,7 +635,7 @@ graph LR
 1. Run credential verification 1000+ times
 2. Measure execution time for correct credentials
 3. Measure execution time for incorrect credentials
-4. Perform statistical analysis (t-test, Mann-Whitney U)
+4. Perform statistical analysis
 5. Verify no statistically significant time difference
 6. Ensures resistant to timing-based side-channel attacks
 
@@ -643,11 +643,11 @@ graph LR
 
 | Attack Type | Test Input | Expected Behavior |
 |-------------|-----------|-------------------|
-| Null byte injection | `file\0.txt` | Reject with validation error |
-| Control characters | Filename with `\n`, `\r` | Reject with validation error |
+| Null byte injection | file with null byte | Reject with validation error |
+| Control characters | Filename with newline or carriage return | Reject with validation error |
 | Extremely long input | 10,000 character filename | Reject with max length error |
 | Unicode exploits | Bidirectional override characters | Accept or sanitize safely |
-| Path injection | Filename containing `../` | Reject with validation error |
+| Path injection | Filename containing path traversal | Reject with validation error |
 
 **Security Test Goals:**
 
@@ -696,19 +696,19 @@ graph TB
 
 | Benchmark | File Path | Framework |
 |-----------|-----------|-----------|
-| Magic analysis | `benches/magic_analysis_benchmark.rs` | criterion |
-| Validation | `benches/validation_benchmark.rs` | criterion |
-| HTTP throughput | `benches/http_throughput_benchmark.rs` | criterion |
+| Magic analysis | benches/magic_analysis_benchmark.rs | criterion |
+| Validation | benches/validation_benchmark.rs | criterion |
+| HTTP throughput | benches/http_throughput_benchmark.rs | criterion |
 
 **Benchmark Scenarios:**
 
 | Operation | Input Size | Measured Metric |
 |-----------|-----------|-----------------|
-| Analyze text | 1KB, 10KB, 100KB, 1MB, 10MB | Execution time (µs/ms) |
-| Analyze binary | 1MB, 10MB, 50MB, 100MB | Execution time (ms) |
-| Filename validation | Various valid/invalid patterns | Execution time (ns) |
-| Path validation | Various path patterns | Execution time (ns) |
-| Request serialization | Typical JSON response | Execution time (µs) |
+| Analyze text | Various sizes | Execution time |
+| Analyze binary | Various sizes | Execution time |
+| Filename validation | Various valid/invalid patterns | Execution time |
+| Path validation | Various path patterns | Execution time |
+| Request serialization | Typical JSON response | Execution time |
 
 **Performance Targets:**
 
@@ -723,12 +723,12 @@ graph TB
 
 ```mermaid
 graph LR
-    Ramp[Ramp Up<br/>30s to 100 users] --> Sustain[Sustain<br/>100 users for 60s]
-    Sustain --> Down[Ramp Down<br/>30s to 0 users]
+    Ramp[Ramp Up] --> Sustain[Sustain]
+    Sustain --> Down[Ramp Down]
     
     Sustain --> Collect[Collect Metrics]
     Collect --> RPS[Requests/second]
-    Collect --> Latency[Latency p50/p95/p99]
+    Collect --> Latency[Latency]
     Collect --> Errors[Error rate]
     Collect --> Conns[Active connections]
     
@@ -742,19 +742,19 @@ graph LR
 |----------|--------------|----------|------------|------------------|
 | Normal load | 100 | 5 minutes | 500-1000 | < 1% errors, p95 < 500ms |
 | High load | 500 | 5 minutes | 2000-3000 | < 5% errors, p95 < 1s |
-| Spike test | 0→1000→0 | 2 minutes | Varies | Graceful degradation |
+| Spike test | Sudden increase | 2 minutes | Varies | Graceful degradation |
 
-**Load Test Tool:** k6 (JavaScript-based load testing)
+**Load Test Tool:** k6
 
 **Load Test Metrics:**
 
 | Metric | Collection Method | Acceptance Threshold |
 |--------|------------------|---------------------|
-| Throughput (RPS) | k6 built-in | > 500 req/s |
-| Response time p50 | k6 histogram | < 200ms |
-| Response time p95 | k6 histogram | < 500ms |
-| Response time p99 | k6 histogram | < 1000ms |
-| Error rate | k6 checks | < 1% |
+| Throughput (RPS) | load test tool | > 500 req/s |
+| Response time p50 | load test tool | < 200ms |
+| Response time p95 | load test tool | < 500ms |
+| Response time p99 | load test tool | < 1000ms |
+| Error rate | load test tool | < 1% |
 | Concurrent connections | Server metrics | < 1000 |
 
 ### 9.3. Stress Testing
@@ -771,10 +771,10 @@ graph LR
 
 | Test Type | Configuration | Expected Behavior |
 |-----------|--------------|-------------------|
-| Connection limit | Open 1500 connections | Reject after 1000, backlog to 1024, rest refused |
-| Memory stress | Continuous 100MB requests | Stable memory, no leaks |
-| Timeout stress | Slow client connections | Timeout after 60s, release resources |
-| Error rate spike | Send 50% invalid requests | Maintain throughput for valid requests |
+| Connection limit | Open many connections | Reject after limit |
+| Memory stress | Continuous large requests | Stable memory, no leaks |
+| Timeout stress | Slow client connections | Timeout and release resources |
+| Error rate spike | Send many invalid requests | Maintain throughput for valid requests |
 
 ### 9.4. Endurance Testing
 
@@ -784,23 +784,23 @@ graph LR
 |-----------|-------|---------|
 | Duration | 24 hours | Detect slow leaks |
 | Load | 50% capacity | Sustainable load |
-| Monitoring | Every 5 minutes | Memory, CPU, connections |
+| Monitoring | Periodic | Memory, CPU, connections |
 
 **Monitored Metrics:**
 
-- Memory usage (RSS, heap)
+- Memory usage
 - CPU utilization
 - Active connections
-- Request latency (trend over time)
+- Request latency
 - Error rate
 - File descriptor count
 
 **Acceptance Criteria:**
 
-- Memory usage remains stable (< 5% growth over 24h)
+- Memory usage remains stable
 - No file descriptor leaks
 - Response times remain consistent
-- Error rate stays below 0.1%
+- Error rate stays low
 
 ---
 
@@ -842,17 +842,16 @@ graph TB
 
 | Tool | Purpose | Output Format |
 |------|---------|---------------|
-| cargo-tarpaulin | Line and branch coverage | HTML, XML, JSON |
-| codecov | Coverage tracking and visualization | Web dashboard |
-| Coveralls | Alternative coverage service | Web dashboard |
+| coverage tool | Line and branch coverage | HTML, XML, JSON |
+| coverage dashboard | Tracking and visualization | Web dashboard |
 
 **Coverage Exclusions:**
 
-- Generated code (build.rs output)
+- Generated code
 - Main function boilerplate
 - Debug-only code paths
-- Unreachable panic branches
-- External crate re-exports
+- Unreachable branches
+- External components
 
 **Coverage Enforcement:**
 
@@ -868,7 +867,7 @@ graph TB
 ```mermaid
 graph TB
     subgraph Test Utilities
-        Common[tests/common/mod.rs]
+        Common[tests/common/Shared utilities]
         Fixtures[Test Fixtures]
         Builders[Builder Functions]
         Mocks[Mock Generators]
@@ -885,8 +884,8 @@ graph TB
     Fixtures --> SampleFiles[Sample file data]
     Fixtures --> TestData[Test data constants]
     
-    Mocks --> MockRepo[MockMagicRepository]
-    Mocks --> MockAuth[MockAuthService]
+    Mocks --> MockRepo[Mock Repository]
+    Mocks --> MockAuth[Mock Auth Service]
     
     style Common fill:#e1f5ff
     style Fixtures fill:#fff4e1
@@ -894,33 +893,33 @@ graph TB
     style Mocks fill:#e1ffe1
 ```
 
-**Test Utilities Location:** `tests/common/mod.rs`
+**Test Utilities Location:** tests/common/mod.rs
 
 **Utility Functions:**
 
 | Function | Purpose | Returns |
 |----------|---------|---------|
-| `build_test_app_state()` | Creates AppState with test configuration | AppState |
-| `spawn_test_server()` | Starts HTTP server on random port | Server handle + URL |
-| `create_test_file()` | Creates file in temporary directory | Path to file |
-| `cleanup_test_files()` | Removes test files and directories | () |
-| `generate_test_data()` | Creates various file type samples | HashMap of samples |
-| `create_mock_repository()` | Builds mockall repository with defaults | MockMagicRepository |
+| build_test_app_state | Creates application state with test configuration | Application state |
+| spawn_test_server | Starts HTTP server on random port | Server handle + URL |
+| create_test_file | Creates file in temporary directory | Path to file |
+| cleanup_test_files | Removes test files and directories | Success or failure |
+| generate_test_data | Creates various file type samples | Collection of samples |
+| create_mock_repository | Builds mock repository with defaults | Mock repository |
 
 **Test Fixtures:**
 
 | Fixture Type | Location | Content |
 |--------------|----------|---------|
-| Sample files | `tests/fixtures/files/` | Text, JSON, XML, binary samples |
-| Test credentials | `tests/common/mod.rs` | Default test username/password |
-| Mock responses | `tests/common/mod.rs` | Predefined MIME types and descriptions |
+| Sample files | tests/fixtures/files/ | Text, JSON, XML, binary samples |
+| Test credentials | tests/common/ | Default test username/password |
+| Mock responses | tests/common/ | Predefined MIME types and descriptions |
 
 **Fixture Examples:**
 
-- `tests/fixtures/files/sample.txt` - Plain text file
-- `tests/fixtures/files/sample.json` - JSON document
-- `tests/fixtures/files/sample.png` - PNG image (magic bytes)
-- `tests/fixtures/files/empty.bin` - Empty file
+- sample.txt - Plain text file
+- sample.json - JSON document
+- sample.png - PNG image
+- empty.bin - Empty file
 
 **Test Helper Patterns:**
 
@@ -949,7 +948,7 @@ graph TB
     UnitTest --> Coverage
     IntTest --> Coverage
     
-    Coverage --> Gate{Coverage >= 80%?}
+    Coverage --> Gate{Coverage Requirements?}
     Security --> Gate
     
     Gate -->|Yes| Success[Pipeline Success]
@@ -966,28 +965,28 @@ graph TB
 
 | Stage | Command | Duration | Failure Action |
 |-------|---------|----------|---------------|
-| Lint | `cargo clippy -- -D warnings` | 30s | Block PR |
-| Format | `cargo fmt -- --check` | 10s | Block PR |
-| Build | `cargo build --release` | 2-3min | Block PR |
-| Unit Tests | `cargo test --lib` | 1-2min | Block PR |
-| Integration Tests | `cargo test --test '*'` | 2-3min | Block PR |
-| Doc Tests | `cargo test --doc` | 30s | Block PR |
-| Coverage | `cargo tarpaulin --out Xml` | 3-5min | Warn if < 80% |
-| Security Audit | `cargo audit` | 30s | Warn on high severity |
+| Lint | Static analysis | 30s | Block PR |
+| Format | Style check | 10s | Block PR |
+| Build | Compile project | 2-3min | Block PR |
+| Unit Tests | Library tests | 1-2min | Block PR |
+| Integration Tests | Cross-module tests | 2-3min | Block PR |
+| Doc Tests | Documentation tests | 30s | Block PR |
+| Coverage | Measure coverage | 3-5min | Warn if below threshold |
+| Security Audit | Vulnerability scan | 30s | Warn on high severity |
 
 **CI Environments:**
 
-| Environment | OS | Rust Version | Purpose |
-|-------------|----|--------------|---------| |
-| Primary | Ubuntu 22.04 | Stable | Main test suite |
-| MSRV | Ubuntu 22.04 | 1.70.0 | Minimum supported Rust version |
-| Nightly | Ubuntu 22.04 | Nightly | Early warning for breaking changes |
+| Environment | OS | Toolchain | Purpose |
+|-------------|----|-----------|---------| |
+| Primary | Ubuntu | Stable | Main test suite |
+| MSRV | Ubuntu | Minimum supported version | Stability check |
+| Nightly | Ubuntu | Nightly | Early warning |
 
 **CI Triggers:**
 
 - Every push to any branch
-- Every pull request (open, update, reopen)
-- Daily scheduled run on main branch
+- Every pull request
+- Daily scheduled run
 - Manual workflow dispatch
 
 **Artifacts:**
@@ -995,7 +994,7 @@ graph TB
 | Artifact | Format | Retention | Purpose |
 |----------|--------|-----------|---------|
 | Coverage report | HTML | 30 days | Debug coverage issues |
-| Test results | JUnit XML | 30 days | Failure analysis |
+| Test results | XML | 30 days | Failure analysis |
 | Build logs | Text | 7 days | Build troubleshooting |
 | Binary | Executable | 7 days | Testing/deployment |
 
@@ -1003,9 +1002,9 @@ graph TB
 
 All checks must pass before merge:
 - Zero compiler warnings
-- Zero clippy warnings
+- Zero analysis warnings
 - All tests pass
-- Coverage >= 80%
+- Coverage meets minimum requirements
 - No high-severity security vulnerabilities
 - Code formatted correctly
 

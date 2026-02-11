@@ -27,8 +27,8 @@ The `MagicRepository` trait defines the contract for file magic analysis operati
 classDiagram
     class MagicRepository {
         <<trait>>
-        +analyze_buffer(data: &[u8], filename: &str) Result~MagicResult, DomainError~
-        +analyze_file(path: &Path) Result~MagicResult, DomainError~
+        analyze_buffer
+        analyze_file
     }
     
     class MagicResult {
@@ -62,12 +62,12 @@ Analyzes binary data from any source (memory, mmap, static).
 
 ```mermaid
 flowchart TD
-    Input["Input: &[u8] + filename"] --> Validate{Valid input?}
-    Validate -->|No| ErrValidation[DomainError::ValidationError]
+    Input["Input: Byte slice + filename"] --> Validate{Valid input?}
+    Validate -->|No| ErrValidation[Validation Error]
     Validate -->|Yes| Analyze[Perform magic analysis]
     Analyze --> Success{Analysis OK?}
-    Success -->|No| ErrMagic[DomainError::MagicError]
-    Success -->|Yes| Result([Ok MagicResult])
+    Success -->|No| ErrMagic[Magic Error]
+    Success -->|Yes| Result([Successful Result])
     
     style Result fill:#90EE90
     style ErrValidation fill:#FFB6C1
@@ -75,21 +75,21 @@ flowchart TD
 ```
 
 **Parameters:**
-- `data: &[u8]` - Byte slice from any source (memory, mmap, network)
-- `filename: &str` - Original filename for context (libmagic uses this)
+- data: Byte slice from any source (memory, mmap, network)
+- filename: Original filename for context (libmagic uses this)
 
 **Returns:**
-- `Ok(MagicResult)` - Analysis successful
-- `Err(DomainError::ValidationError)` - Invalid input (empty data, invalid filename)
-- `Err(DomainError::MagicError)` - Analysis failed (libmagic error)
+- Successful Result: Analysis successful
+- Validation Error: Invalid input (empty data, invalid filename)
+- Magic Error: Analysis failed (libmagic error)
 
 **Accepts data from:**
 
 | Source Type | Example | Compatible |
 |-------------|---------|------------|
-| In-Memory Buffer | `Vec<u8>`, `Bytes` | ✅ |
-| Memory-Mapped File | `Mmap::as_ref()` | ✅ |
-| Static Data | `&[u8; N]` | ✅ |
+| In-Memory Buffer | Buffer from memory | ✅ |
+| Memory-Mapped File | Slice from mapped file | ✅ |
+| Static Data | Constant array | ✅ |
 | Network Buffer | HTTP request body | ✅ |
 
 ### analyze_file
@@ -98,14 +98,14 @@ Analyzes file by filesystem path (libmagic opens file internally).
 
 ```mermaid
 flowchart TD
-    Input["Input: &Path"] --> CheckPath{Path valid?}
-    CheckPath -->|No| ErrValidation[DomainError::ValidationError]
+    Input["Input: File Path"] --> CheckPath{Path valid?}
+    CheckPath -->|No| ErrValidation[Validation Error]
     CheckPath -->|Yes| CheckExists{File exists?}
-    CheckExists -->|No| ErrNotFound[DomainError::FileNotFound]
+    CheckExists -->|No| ErrNotFound[File Not Found]
     CheckExists -->|Yes| Analyze[Perform magic analysis]
     Analyze --> Success{Analysis OK?}
-    Success -->|No| ErrMagic[DomainError::MagicError]
-    Success -->|Yes| Result([Ok MagicResult])
+    Success -->|No| ErrMagic[Magic Error]
+    Success -->|Yes| Result([Successful Result])
     
     style Result fill:#90EE90
     style ErrValidation fill:#FFB6C1
@@ -114,13 +114,13 @@ flowchart TD
 ```
 
 **Parameters:**
-- `path: &Path` - Absolute path to file (must be within sandbox)
+- path: Absolute path to file (must be within sandbox)
 
 **Returns:**
-- `Ok(MagicResult)` - Analysis successful
-- `Err(DomainError::ValidationError)` - Invalid path
-- `Err(DomainError::FileNotFound)` - File doesn't exist
-- `Err(DomainError::MagicError)` - Analysis failed
+- Successful Result: Analysis successful
+- Validation Error: Invalid path
+- File Not Found: File doesn't exist
+- Magic Error: Analysis failed
 
 ## Error Mapping
 
