@@ -16,7 +16,8 @@ async fn test_analyze_content_handler_success() {
     let magic_repo = Arc::new(FakeMagicRepository::new().unwrap());
     let sandbox = Arc::new(PathSandbox::new(PathBuf::from("/tmp")));
     let auth_service = Arc::new(FakeAuth);
-    let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service));
+    let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
+    let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service, config));
     let router = create_router(state);
 
     let response = router
@@ -32,6 +33,9 @@ async fn test_analyze_content_handler_success() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert!(json.get("result").is_some());
 }
 
 #[tokio::test]
@@ -45,7 +49,8 @@ async fn test_analyze_path_handler_success() {
     std::fs::write(PathBuf::from(temp_dir).join("test.pdf"), b"%PDF-1.4").unwrap();
 
     let auth_service = Arc::new(FakeAuth);
-    let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service));
+    let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
+    let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service, config));
     let router = create_router(state);
 
     let response = router
@@ -63,6 +68,6 @@ async fn test_analyze_path_handler_success() {
     assert_eq!(response.status(), StatusCode::OK);
     
     let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
-    assert_ne!(body_str, "Not implemented");
+    let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(json["result"]["mime_type"], "application/pdf");
 }

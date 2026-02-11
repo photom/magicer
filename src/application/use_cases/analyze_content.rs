@@ -4,14 +4,19 @@ use crate::domain::repositories::magic_repository::MagicRepository;
 use crate::domain::value_objects::filename::WindowsCompatibleFilename;
 use crate::domain::value_objects::request_id::RequestId;
 use crate::application::errors::ApplicationError;
+use crate::infrastructure::config::server_config::ServerConfig;
+use crate::infrastructure::filesystem::temp_file_handler::TempFileHandler;
+use crate::infrastructure::filesystem::mmap::MmapHandler;
+use std::path::Path;
 
 pub struct AnalyzeContentUseCase {
     magic_repo: Arc<dyn MagicRepository>,
+    config: Arc<ServerConfig>,
 }
 
 impl AnalyzeContentUseCase {
-    pub fn new(magic_repo: Arc<dyn MagicRepository>) -> Self {
-        Self { magic_repo }
+    pub fn new(magic_repo: Arc<dyn MagicRepository>, config: Arc<ServerConfig>) -> Self {
+        Self { magic_repo, config }
     }
 
     pub async fn execute(
@@ -20,7 +25,23 @@ impl AnalyzeContentUseCase {
         filename: WindowsCompatibleFilename,
         data: &[u8],
     ) -> Result<MagicResult, ApplicationError> {
-        let (mime_type, description) = self.magic_repo.analyze_buffer(data, filename.as_str()).await?;
+        let threshold = self.config.analysis.large_file_threshold_mb * 1024 * 1024;
+        
+        let (mime_type, description) = if data.len() < threshold {
+            self.magic_repo.analyze_buffer(data, filename.as_str()).await?
+        } else {
+            let temp_dir = Path::new(&self.config.analysis.temp_dir);
+            let mut temp_file = TempFileHandler::create_temp_file(data, temp_dir)
+                .map_err(|e| ApplicationError::InternalError(format!("Failed to create temp file: {}", e)))?;
+            
+            let mmap = MmapHandler::new(&std::fs::File::open(temp_file.path()).unwrap())
+                .map_err(|e| ApplicationError::InternalError(format!("Failed to mmap temp file: {}", e)))?;
+            
+            let result = self.magic_repo.analyze_buffer(mmap.as_slice(), filename.as_str()).await;
+            
+            // Cleanup happens on drop of temp_file and mmap
+            result?
+        };
         
         Ok(MagicResult::new(
             request_id,

@@ -37,7 +37,8 @@ impl AuthenticationService for FakeAuthService {
 async fn build_app(auth_service: Arc<dyn AuthenticationService>) -> Router {
     let magic_repo = Arc::new(FakeMagicRepository::new().unwrap());
     let sandbox = Arc::new(PathSandbox::new(PathBuf::from("/tmp")));
-    let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service));
+    let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
+    let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service, config));
     
     Router::new()
         .route("/", get(|| async { StatusCode::OK }))

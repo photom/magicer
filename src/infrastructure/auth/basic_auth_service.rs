@@ -24,7 +24,7 @@ impl AuthenticationService for BasicAuthService {
             let username_matches = self.expected_username.as_bytes().ct_eq(credentials.username().as_bytes());
             let password_matches = self.expected_password.as_bytes().ct_eq(credentials.password().as_bytes());
 
-            if username_matches.into() && password_matches.into() {
+            if (username_matches & password_matches).into() {
                 Ok(())
             } else {
                 Err(AuthenticationError::InvalidCredentials)

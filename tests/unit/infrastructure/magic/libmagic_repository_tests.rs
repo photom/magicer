@@ -11,3 +11,22 @@ async fn test_analyze_buffer_pdf() {
     assert_eq!(mime.as_str(), "application/pdf");
     assert!(desc.contains("PDF"));
 }
+
+#[tokio::test]
+async fn test_analyze_buffer_concurrent() {
+    let repo = std::sync::Arc::new(FakeMagicRepository::new().unwrap());
+    let mut handles = vec![];
+    
+    for _ in 0..10 {
+        let r = repo.clone();
+        handles.push(tokio::spawn(async move {
+            let data = b"%PDF-1.4";
+            r.analyze_buffer(data, "test.pdf").await.unwrap()
+        }));
+    }
+    
+    for h in handles {
+        let (mime, _) = h.await.unwrap();
+        assert_eq!(mime.as_str(), "application/pdf");
+    }
+}

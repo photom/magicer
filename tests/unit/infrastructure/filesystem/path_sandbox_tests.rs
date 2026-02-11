@@ -16,11 +16,11 @@ fn test_sandbox_resolve_path_success() {
 }
 
 #[test]
-fn test_sandbox_resolve_path_boundary_violation() {
+fn test_sandbox_within_boundary() {
     let base_dir = PathBuf::from("/tmp/sandbox");
-    let _sandbox = PathSandbox::new(base_dir);
-    // RelativePath already prevents .. traversal, but let's test absolute path escape attempt 
-    // (though RelativePath::new rejects it, we want to see how Sandbox handles it if passed)
-    // Actually, SandboxService takes RelativePath, which is already validated.
-    // So traversal is impossible via RelativePath.
+    let sandbox = PathSandbox::new(base_dir.clone());
+    let relative_path = RelativePath::new("docs/test.txt").unwrap();
+    
+    let result = sandbox.resolve_path(&relative_path).unwrap();
+    assert!(result.starts_with(&base_dir));
 }

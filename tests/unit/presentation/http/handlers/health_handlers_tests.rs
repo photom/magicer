@@ -16,7 +16,8 @@ async fn test_ping_handler() {
     let magic_repo = Arc::new(FakeMagicRepository::new().unwrap());
     let sandbox = Arc::new(PathSandbox::new(PathBuf::from("/tmp")));
     let auth_service = Arc::new(FakeAuth);
-    let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service));
+    let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
+    let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service, config));
     let router = create_router(state);
 
     let response = router
@@ -30,4 +31,8 @@ async fn test_ping_handler() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(json["message"], "pong");
+    assert!(json.get("request_id").is_some());
 }

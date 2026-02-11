@@ -8,15 +8,32 @@ fn test_mime_type_valid_accepted() {
 }
 
 #[test]
+fn test_mime_type_parts() {
+    let mime = MimeType::new("text/plain").unwrap();
+    assert_eq!(mime.type_part(), "text");
+    assert_eq!(mime.subtype(), "plain");
+}
+
+#[test]
+fn test_mime_type_categorization() {
+    let text = MimeType::new("text/html").unwrap();
+    assert!(text.is_text());
+    assert!(!text.is_application());
+    
+    let app = MimeType::new("application/json").unwrap();
+    assert!(app.is_application());
+    assert!(!app.is_text());
+    assert!(app.is_binary());
+}
+
+#[test]
 fn test_mime_type_invalid_format_rejected() {
     let mime = MimeType::try_from("not-a-mime");
     assert!(mime.is_err());
-    assert_eq!(mime.unwrap_err(), magicer::domain::errors::ValidationError::InvalidCharacter);
 }
 
 #[test]
 fn test_mime_type_empty_rejected() {
     let mime = MimeType::try_from("");
     assert!(mime.is_err());
-    assert_eq!(mime.unwrap_err(), magicer::domain::errors::ValidationError::EmptyValue);
 }

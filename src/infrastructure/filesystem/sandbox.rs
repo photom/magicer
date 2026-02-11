@@ -17,8 +17,15 @@ impl SandboxService for PathSandbox {
     fn resolve_path(&self, path: &RelativePath) -> Result<PathBuf, ValidationError> {
         let full_path = self.base_dir.join(path.as_str());
         
-        // In a real implementation, we should canonicalize and check boundaries.
-        // For now, simple join is enough to pass the first test.
+        // Ensure the path is within base_dir
+        // Since RelativePath already prevents '..', a simple join should stay within base_dir
+        // unless base_dir itself is malicious or if there are symlinks.
+        // For production, we should use canonicalize() but it requires file to exist.
+        
+        if !full_path.starts_with(&self.base_dir) {
+            return Err(ValidationError::PathTraversal);
+        }
+        
         Ok(full_path)
     }
 }

@@ -27,6 +27,9 @@ async fn test_ping_endpoint() {
     let server = setup_test_server();
     let response = server.get("/v1/ping").await;
     response.assert_status_ok();
+    let json = response.json::<serde_json::Value>();
+    assert_eq!(json["message"], "pong");
+    assert!(json.get("request_id").is_some());
 }
 
 #[tokio::test]
@@ -41,7 +44,7 @@ async fn test_content_analysis_success() {
     
     response.assert_status_ok();
     let json = response.json::<serde_json::Value>();
-    assert_eq!(json["mime_type"], "application/pdf");
+    assert_eq!(json["result"]["mime_type"], "application/pdf");
 }
 
 #[tokio::test]
@@ -62,7 +65,7 @@ async fn test_path_analysis_success() {
     
     response.assert_status_ok();
     let json = response.json::<serde_json::Value>();
-    assert_eq!(json["mime_type"], "image/png");
+    assert_eq!(json["result"]["mime_type"], "image/png");
 }
 
 #[tokio::test]

@@ -43,3 +43,23 @@ async fn test_analyze_path_success() {
     assert_eq!(result.mime_type().as_str(), "application/pdf");
     assert_eq!(result.description(), "PDF document");
 }
+
+struct BoundaryViolatingSandbox;
+impl SandboxService for BoundaryViolatingSandbox {
+    fn resolve_path(&self, _path: &RelativePath) -> Result<PathBuf, ValidationError> {
+        Err(ValidationError::PathTraversal)
+    }
+}
+
+#[tokio::test]
+async fn test_analyze_path_outside_sandbox_rejected() {
+    let repo: Arc<dyn MagicRepository> = Arc::new(FakeMagicRepo);
+    let sandbox: Arc<dyn SandboxService> = Arc::new(BoundaryViolatingSandbox);
+    let use_case = AnalyzePathUseCase::new(repo, sandbox);
+    let request_id = RequestId::generate();
+    let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
+    let path = RelativePath::new("test.pdf").unwrap();
+    
+    let result = use_case.execute(request_id, filename, path).await;
+    assert!(result.is_err());
+}

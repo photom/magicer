@@ -29,7 +29,7 @@ async fn main() {
     let auth_service = Arc::new(BasicAuthService::new("admin", "secret"));
 
     // Initialize application state
-    let app_state = Arc::new(AppState::new(magic_repo, sandbox, auth_service));
+    let app_state = Arc::new(AppState::new(magic_repo, sandbox, auth_service, Arc::new(config)));
 
     // Build router with middleware
     let app = create_router(app_state)

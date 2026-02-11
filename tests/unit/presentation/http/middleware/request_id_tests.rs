@@ -25,4 +25,37 @@ async fn test_request_id_middleware() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.headers().contains_key("x-request-id"));
+}
+
+#[tokio::test]
+async fn test_request_id_respects_existing_header() {
+    let existing_id = RequestId::generate();
+    let app = Router::new()
+        .route("/", get({
+            let existing_id = existing_id.clone();
+            move |req: Request<Body>| async move {
+                let request_id = req.extensions().get::<RequestId>().unwrap();
+                assert_eq!(request_id.as_str(), existing_id.as_str());
+                StatusCode::OK
+            }
+        }))
+        .layer(from_fn(add_request_id));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/")
+                .header("x-request-id", existing_id.as_str())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("x-request-id").unwrap().to_str().unwrap(),
+        existing_id.as_str()
+    );
 }
