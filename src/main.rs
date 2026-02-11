@@ -15,7 +15,7 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     // Load configuration
-    let config = ServerConfig::load_from_env();
+    let config = ServerConfig::load();
     tracing::info!("Server configuration loaded: {:?}", config);
 
     // Initialize infrastructure
@@ -44,7 +44,7 @@ async fn main() {
         ;
 
     // Address to bind to
-    let addr = format!("{}:{}", config.host, config.port);
+    let addr = format!("{}:{}", config.server.host, config.server.port);
     let listener = TcpListener::bind(&addr).await.unwrap();
     tracing::info!("Listening on {}", addr);
 
