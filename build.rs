@@ -24,6 +24,7 @@ fn main() {
         let zlib_src = build_dir.join(format!("zlib-{}", zlib_version));
 
         // OpenSSF Hardening Flags
+        // https://best.openssf.org/Compiler-Hardening-Guides/Compiler-Options-Hardening-Guide-for-C-and-C++.html
         let cflags = "-O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -fstack-clash-protection -fcf-protection -fPIC -Wall -Wformat -Wformat-security";
         let ldflags = "-Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack";
 
