@@ -1,4 +1,17 @@
-# Application Errors Class Diagram
+# Application Errors Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Error Variants](#error-variants)
+- [Error Mapping from Domain](#error-mapping-from-domain)
+- [Usage Patterns](#usage-patterns)
+  - [Error Propagation in Use Cases](#error-propagation-in-use-cases)
+  - [Integration with Handlers](#integration-with-handlers)
+- [Error Mapping and Context](#error-mapping-and-context)
+- [Error Metrics](#error-metrics)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 

@@ -1,4 +1,21 @@
-# MimeType Value Object Class Diagram
+# MimeType Value Object Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [MIME Type Format](#mime-type-format)
+- [Validation Rules](#validation-rules)
+- [Properties](#properties)
+- [Methods](#methods)
+- [Common MIME Types](#common-mime-types)
+- [Invariants](#invariants)
+- [Usage Scenarios](#usage-scenarios)
+  - [Valid MIME Types](#valid-mime-types)
+  - [Construct from Parts](#construct-from-parts)
+  - [Invalid Scenarios](#invalid-scenarios)
+- [Type Categorization](#type-categorization)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 

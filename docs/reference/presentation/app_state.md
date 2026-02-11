@@ -1,4 +1,16 @@
-# AppState Class Diagram
+# AppState Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Properties](#properties)
+- [State Initialization and Construction](#state-initialization-and-construction)
+- [Usage in Handlers and Middleware](#usage-in-handlers-and-middleware)
+- [Thread Safety and Performance](#thread-safety-and-performance)
+- [Dependencies and Layering](#dependencies-and-layering)
+- [Dependencies](#dependencies)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 

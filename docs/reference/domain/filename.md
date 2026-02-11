@@ -1,4 +1,17 @@
-# Filename Value Object Class Diagram
+# Filename Value Object Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Validation Rules](#validation-rules)
+- [Properties](#properties)
+- [Methods](#methods)
+- [Invariants](#invariants)
+- [Usage Scenarios](#usage-scenarios)
+  - [Valid Filename](#valid-filename)
+  - [Invalid Scenarios](#invalid-scenarios)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 

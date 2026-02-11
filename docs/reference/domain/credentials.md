@@ -1,4 +1,21 @@
-# Credentials Value Object Class Diagram
+# Credentials Value Object Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Validation Rules](#validation-rules)
+- [Properties](#properties)
+- [Methods](#methods)
+- [Invariants](#invariants)
+- [Security Features](#security-features)
+- [Usage Scenarios](#usage-scenarios)
+  - [Valid Credentials](#valid-credentials)
+  - [Invalid Scenarios](#invalid-scenarios)
+- [HTTP Basic Auth Format](#http-basic-auth-format)
+- [Constant-Time Verification](#constant-time-verification)
+- [Security Considerations](#security-considerations)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 

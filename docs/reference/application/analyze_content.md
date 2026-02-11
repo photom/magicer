@@ -1,4 +1,22 @@
-# AnalyzeContentUseCase Class Diagram
+# AnalyzeContentUseCase Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Execution Flow](#execution-flow)
+- [Properties](#properties)
+- [Methods](#methods)
+- [Execution Process](#execution-process)
+- [Error Mapping](#error-mapping)
+- [Usage Scenario](#usage-scenario)
+  - [Use Case Initialization](#use-case-initialization)
+  - [Executing Analysis](#executing-analysis)
+  - [Handling Failures](#handling-failures)
+- [Request Validation](#request-validation)
+- [Response Construction](#response-construction)
+- [Dependencies](#dependencies)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 

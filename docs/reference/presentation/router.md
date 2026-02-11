@@ -1,4 +1,18 @@
-# Router Class Diagram
+# Router Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Route Configuration](#route-configuration)
+- [Route Table](#route-table)
+- [Middleware Stack](#middleware-stack)
+- [Router Construction and Logic](#router-construction-and-logic)
+- [State Management and Injection](#state-management-and-injection)
+- [Router Implementation Pattern](#router-implementation-pattern)
+- [Server Initialization and Lifecycle](#server-initialization-and-lifecycle)
+- [API Integration Specification](#api-integration-specification)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 

@@ -1,4 +1,20 @@
-# RequestId Value Object Class Diagram
+# RequestId Value Object Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Creation Methods](#creation-methods)
+- [Properties](#properties)
+- [Methods](#methods)
+- [Invariants](#invariants)
+- [Usage Scenarios](#usage-scenarios)
+  - [Generate New Request ID](#generate-new-request-id)
+  - [Parse from String](#parse-from-string)
+  - [Invalid Scenarios](#invalid-scenarios)
+- [UUID v4 Format](#uuid-v4-format)
+- [Trait Implementations](#trait-implementations)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 

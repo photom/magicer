@@ -1,4 +1,20 @@
-# ServerConfig Class Diagram
+# ServerConfig Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Configuration Specification](#configuration-specification)
+  - [Server Settings](#server-settings)
+  - [Sandbox Settings](#sandbox-settings)
+  - [Magic Settings](#magic-settings)
+  - [Logging Settings](#logging-settings)
+- [Usage Scenario](#usage-scenario)
+  - [Loading Configuration](#loading-configuration)
+  - [Validation during Startup](#validation-during-startup)
+  - [Dependency Injection](#dependency-injection)
+- [Testing Strategy](#testing-strategy)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 

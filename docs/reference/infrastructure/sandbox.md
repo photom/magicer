@@ -1,4 +1,22 @@
-# PathSandbox Class Diagram
+# PathSandbox Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Initialization](#initialization)
+- [Properties](#properties)
+- [Methods](#methods)
+- [Path Resolution Process](#path-resolution-process)
+- [Boundary Checking](#boundary-checking)
+- [Symlink Handling](#symlink-handling)
+- [Path Traversal Prevention](#path-traversal-prevention)
+- [Usage Example](#usage-example)
+- [Security Validation Steps](#security-validation-steps)
+- [Implementation Details](#implementation-details)
+- [Testing](#testing)
+- [Error Cases](#error-cases)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 

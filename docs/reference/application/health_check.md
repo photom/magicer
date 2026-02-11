@@ -1,4 +1,18 @@
-# HealthCheckUseCase Class Diagram
+# HealthCheckUseCase Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Execution Flow](#execution-flow)
+- [Properties](#properties)
+- [Methods](#methods)
+- [Execution Process](#execution-process)
+- [Usage Scenario](#usage-scenario)
+  - [Integration Patterns](#integration-patterns)
+  - [Execution](#execution)
+- [Response Codes](#response-codes)
+- [Testing Strategy](#testing-strategy)
+
+---
 
 ## Overview
 

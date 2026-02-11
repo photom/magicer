@@ -1,4 +1,13 @@
-# Documentation Map
+# Documentation Map <!-- omit in toc -->
+
+- [By Role](#by-role)
+- [By Task](#by-task)
+- [By Type](#by-type)
+  - [📖 Tutorials (Learning-Oriented)](#-tutorials-learning-oriented)
+  - [🛠️ How-To Guides (Problem-Oriented)](#️-how-to-guides-problem-oriented)
+  - [📚 Reference (Information-Oriented)](#-reference-information-oriented)
+  - [💡 Explanation (Understanding-Oriented)](#-explanation-understanding-oriented)
+
 
 Visual guide to finding documentation based on your needs.
 

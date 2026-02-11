@@ -1,4 +1,27 @@
-# Domain Errors Class Diagram
+# Domain Errors Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Error Hierarchy](#error-hierarchy)
+- [DomainError Variants](#domainerror-variants)
+- [ValidationError Variants](#validationerror-variants)
+  - [Filename Validation](#filename-validation)
+  - [Path Validation](#path-validation)
+  - [Credentials Validation](#credentials-validation)
+  - [MIME Type Validation](#mime-type-validation)
+  - [UUID Validation](#uuid-validation)
+- [MagicError Variants](#magicerror-variants)
+- [Error Flow](#error-flow)
+- [Error Mapping](#error-mapping)
+- [Usage Scenarios](#usage-scenarios)
+  - [Value Object Validation](#value-object-validation)
+  - [Repository Operations](#repository-operations)
+  - [Application Layer Error Handling](#application-layer-error-handling)
+- [Trait Implementations](#trait-implementations)
+- [Error Conversion](#error-conversion)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 

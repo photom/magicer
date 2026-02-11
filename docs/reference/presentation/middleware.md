@@ -1,4 +1,26 @@
-# Middleware Class Diagrams
+# Middleware Class Diagrams <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Middleware Architecture](#middleware-architecture)
+- [Request ID Middleware](#request-id-middleware)
+  - [Class Diagram](#class-diagram)
+  - [Flow](#flow)
+  - [Logic and Injection](#logic-and-injection)
+- [Authentication Middleware](#authentication-middleware)
+  - [Class Diagram](#class-diagram-1)
+  - [Flow](#flow-1)
+  - [Public Endpoints](#public-endpoints)
+- [Timeout Middleware](#timeout-middleware)
+  - [Class Diagram](#class-diagram-2)
+  - [Flow](#flow-2)
+  - [Configuration](#configuration)
+- [Error Handler Middleware](#error-handler-middleware)
+  - [Class Diagram](#class-diagram-3)
+  - [Flow](#flow-3)
+- [Middleware Composition](#middleware-composition)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 
@@ -73,7 +95,7 @@ sequenceDiagram
     Middleware-->>Client: Response with X-Request-ID
 ```
 
-## Request ID Middleware
+## Logic and Injection
 
 The Request ID middleware ensures that every request has a unique identifier for tracing and correlation. It follows a multi-step logic:
 1. **Extraction**: Checks if the incoming request already has an `X-Request-ID` header.

@@ -1,6 +1,17 @@
-# magicer
+# magicer <!-- omit in toc -->
 
 Linux File Magic API Server - A REST API for file type identification using libmagic, built with Rust and Axum.
+- [Quick Start](#quick-start)
+- [Documentation](#documentation)
+  - [Quick Access](#quick-access)
+  - [Key Documents](#key-documents)
+- [API Endpoints](#api-endpoints)
+  - [Automated API Documentation](#automated-api-documentation)
+- [Technology Stack](#technology-stack)
+- [Development Status](#development-status)
+- [Quick Reference](#quick-reference)
+- [License](#license)
+- [References](#references)
 
 ## Quick Start
 

@@ -1,4 +1,22 @@
-# MagicResult Entity Class Diagram
+# MagicResult Entity Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Entity Identity](#entity-identity)
+- [Properties](#properties)
+- [Methods](#methods)
+- [Construction Pattern](#construction-pattern)
+- [Invariants](#invariants)
+- [Usage Scenarios](#usage-scenarios)
+  - [Create Basic Result](#create-basic-result)
+  - [Create Result with Encoding](#create-result-with-encoding)
+  - [Entity Identity](#entity-identity-1)
+- [Entity Lifecycle](#entity-lifecycle)
+- [Equality Semantics](#equality-semantics)
+- [Sample Data](#sample-data)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 

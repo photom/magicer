@@ -1,4 +1,20 @@
-# Response Types Class Diagrams
+# Response Types Class Diagrams <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Response Architecture](#response-architecture)
+- [MagicResponse](#magicresponse)
+  - [Class Diagram](#class-diagram)
+- [Success Response: MagicResponse](#success-response-magic-response)
+  - [Success Fields](#success-fields)
+- [Error Response: ErrorResponse](#error-response-errorresponse)
+  - [Class Diagram](#class-diagram-1)
+- [Error Response Details](#error-response-details)
+  - [Error Fields](#error-fields)
+  - [Standard Error Codes](#standard-error-codes)
+- [Response Serialization and Mapping](#response-serialization-and-mapping)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 
@@ -66,7 +82,7 @@ The success response provides the results of a file magic analysis. It is serial
 | `encoding` | String | No | Character encoding if applicable (e.g., "utf-8") |
 | `analyzed_at` | DateTime | Yes | Precise UTC timestamp of the analysis |
 
-## Error Response: ErrorResponse
+## Error Response Details
 
 When an operation fails, the server returns a standardized error response. This ensures that clients can handle failures consistently across all endpoints.
 

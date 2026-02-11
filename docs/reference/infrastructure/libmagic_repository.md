@@ -1,4 +1,32 @@
-# LibmagicRepository Implementation Class Diagram
+# LibmagicRepository Implementation Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Cookie Lifecycle](#cookie-lifecycle)
+- [Properties](#properties)
+- [Methods](#methods)
+- [Initialization Flow](#initialization-flow)
+- [analyze_buffer Implementation](#analyze_buffer-implementation)
+- [analyze_file Implementation](#analyze_file-implementation)
+- [Error Mapping](#error-mapping)
+- [Cookie Flags](#cookie-flags)
+- [libmagic Output Parsing](#libmagic-output-parsing)
+- [Usage Scenarios](#usage-scenarios)
+  - [Initialization](#initialization)
+  - [Analyze Buffer](#analyze-buffer)
+  - [Analyze File by Path](#analyze-file-by-path)
+  - [Error Handling](#error-handling)
+- [Thread Safety](#thread-safety)
+- [Performance Considerations](#performance-considerations)
+- [Database Configuration](#database-configuration)
+  - [Default Database](#default-database)
+  - [Custom Database](#custom-database)
+- [Testing Approach](#testing-approach)
+  - [PNG Buffer Analysis Test](#png-buffer-analysis-test)
+  - [File Not Found Test](#file-not-found-test)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 

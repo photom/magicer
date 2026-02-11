@@ -1,4 +1,24 @@
-# AnalyzePathUseCase Class Diagram
+# AnalyzePathUseCase Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Execution Flow](#execution-flow)
+- [Properties](#properties)
+- [Methods](#methods)
+- [Execution Process](#execution-process)
+- [Sandbox Validation](#sandbox-validation)
+- [Path Resolution Example](#path-resolution-example)
+- [Error Mapping](#error-mapping)
+- [Usage Scenario](#usage-scenario)
+  - [Initialization](#initialization)
+  - [Execution Pattern](#execution-pattern)
+  - [Response and Error Handling](#response-and-error-handling)
+- [Security Validation Process](#security-validation-process)
+- [Testing Strategy](#testing-strategy)
+- [Dependencies](#dependencies)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 

@@ -1,6 +1,19 @@
-# GitHub Pages Setup for API Documentation
+# GitHub Pages Setup for API Documentation <!-- omit in toc -->
 
 This document explains how to enable GitHub Pages to host the automatically generated OpenAPI documentation.
+- [Prerequisites](#prerequisites)
+- [Setup Steps](#setup-steps)
+  - [1. Enable GitHub Pages](#1-enable-github-pages)
+  - [2. Run the Workflow](#2-run-the-workflow)
+  - [3. Access Your Documentation](#3-access-your-documentation)
+- [Workflow Details](#workflow-details)
+  - [generate-docs](#generate-docs)
+  - [deploy](#deploy)
+- [Troubleshooting](#troubleshooting)
+  - [Workflow fails with "Permission denied"](#workflow-fails-with-permission-denied)
+  - [Pages deployment fails](#pages-deployment-fails)
+  - [Documentation not updating](#documentation-not-updating)
+- [Artifacts](#artifacts)
 
 ## Prerequisites
 

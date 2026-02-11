@@ -1,4 +1,15 @@
-# Magic Handlers Class Diagram
+# Magic Handlers Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Usage Scenario](#usage-scenario)
+  - [Content Analysis Endpoint](#content-analysis-endpoint)
+  - [Path Analysis Endpoint](#path-analysis-endpoint)
+- [Error Handling and Mapping](#error-handling-and-mapping)
+- [Testing Strategy](#testing-strategy)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 

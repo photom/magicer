@@ -1,4 +1,17 @@
-# Health Handler Class Diagram
+# Health Handler Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Handler Signature and Flow](#handler-signature-and-flow)
+- [Response Codes and Examples](#response-codes-and-examples)
+- [Integration Scenarios](#integration-scenarios)
+- [Performance Characteristics](#performance-characteristics)
+- [Testing Strategy](#testing-strategy)
+- [Comparison: Liveness vs Readiness](#comparison-liveness-vs-readiness)
+- [Design Rationale](#design-rationale)
+- [Future Enhancement: Readiness Check](#future-enhancement-readiness-check)
+
+---
 
 ## Overview
 

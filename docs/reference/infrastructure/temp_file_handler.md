@@ -1,4 +1,23 @@
-# TempFileHandler Class Diagram
+# TempFileHandler Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Lifecycle](#lifecycle)
+- [Properties](#properties)
+- [Methods](#methods)
+- [File Creation Process](#file-creation-process)
+- [Unique Filename Generation](#unique-filename-generation)
+- [Atomic File Creation](#atomic-file-creation)
+- [Usage Scenario](#usage-scenario)
+  - [Creating a Temporary File](#creating-a-temporary-file)
+  - [Accessing the Path](#accessing-the-path)
+  - [Automatic and Explicit Cleanup](#automatic-and-explicit-cleanup)
+- [Testing Strategy](#testing-strategy)
+- [Integration with Use Cases](#integration-with-use-cases)
+- [Configuration](#configuration)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 

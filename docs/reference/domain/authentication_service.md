@@ -1,4 +1,26 @@
-# AuthenticationService Trait Class Diagram
+# AuthenticationService Trait Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Trait Definition](#trait-definition)
+- [Verification Flow](#verification-flow)
+- [Security Requirements](#security-requirements)
+  - [Constant-Time Comparison](#constant-time-comparison)
+  - [Timing Attack Mitigation](#timing-attack-mitigation)
+- [Implementation Requirements](#implementation-requirements)
+- [Error Cases](#error-cases)
+- [Trait Bounds](#trait-bounds)
+- [Usage Patterns](#usage-patterns)
+  - [In Presentation Layer](#in-presentation-layer)
+  - [In Infrastructure Layer](#in-infrastructure-layer)
+- [Timing Attack Prevention](#timing-attack-prevention)
+  - [Vulnerable Approach](#vulnerable-approach)
+  - [Secure Approach](#secure-approach)
+- [Dependency Injection](#dependency-injection)
+- [Test Doubles](#test-doubles)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 

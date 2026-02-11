@@ -1,4 +1,19 @@
-# FilePath Value Object Class Diagram
+# FilePath Value Object Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Validation Rules](#validation-rules)
+- [Properties](#properties)
+- [Methods](#methods)
+- [Invariants](#invariants)
+- [Usage Scenarios](#usage-scenarios)
+  - [Valid Relative Path](#valid-relative-path)
+  - [Invalid Scenarios](#invalid-scenarios)
+  - [Join Operation](#join-operation)
+- [Path Normalization](#path-normalization)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 

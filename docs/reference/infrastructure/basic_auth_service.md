@@ -1,4 +1,32 @@
-# BasicAuthService Implementation Class Diagram
+# BasicAuthService Implementation Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Initialization Methods](#initialization-methods)
+- [Properties](#properties)
+- [Methods](#methods)
+- [Verification Flow (Constant-Time)](#verification-flow-constant-time)
+- [Constant-Time Comparison](#constant-time-comparison)
+- [Timing Attack Prevention](#timing-attack-prevention)
+- [Environment Variable Configuration](#environment-variable-configuration)
+- [Configuration Loading](#configuration-loading)
+- [Usage Scenarios](#usage-scenarios)
+  - [Construction from Explicit Credentials](#construction-from-explicit-credentials)
+  - [Construction from Environment Variables](#construction-from-environment-variables)
+  - [Verification Behavior](#verification-behavior)
+  - [Error Handling](#error-handling)
+- [Security Features](#security-features)
+- [Error Cases](#error-cases)
+- [Integration with Middleware](#integration-with-middleware)
+- [Testing Approach](#testing-approach)
+  - [Valid Credentials Test](#valid-credentials-test)
+  - [Invalid Password Test](#invalid-password-test)
+  - [Empty Credentials Test](#empty-credentials-test)
+  - [Timing Attack Resistance Test](#timing-attack-resistance-test)
+- [Design Rationale](#design-rationale)
+- [Production Considerations](#production-considerations)
+
+---
 
 ## Overview
 

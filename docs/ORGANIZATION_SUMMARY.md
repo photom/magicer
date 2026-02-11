@@ -1,6 +1,14 @@
-# Documentation Organization Summary
+# Documentation Organization Summary <!-- omit in toc -->
 
 Documentation organized by [Diátaxis framework](https://diataxis.fr/) into four categories.
+- [Structure](#structure)
+- [Documents by Category](#documents-by-category)
+  - [Tutorials (Learning-Oriented)](#tutorials-learning-oriented)
+  - [How-To Guides (Problem-Oriented)](#how-to-guides-problem-oriented)
+  - [Reference (Information-Oriented)](#reference-information-oriented)
+  - [Explanation (Understanding-Oriented)](#explanation-understanding-oriented)
+- [Navigation](#navigation)
+- [Changes Made](#changes-made)
 
 ## Structure
 

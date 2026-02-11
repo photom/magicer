@@ -1,4 +1,29 @@
-# Application DTOs Class Diagrams
+# Application DTOs Class Diagrams <!-- omit in toc -->
+
+- [Overview](#overview)
+- [DTO Architecture](#dto-architecture)
+- [AnalyzeContentRequest DTO](#analyzecontentrequest-dto)
+  - [Class Diagram](#class-diagram)
+  - [Properties](#properties)
+  - [Methods](#methods)
+- [AnalyzePathRequest DTO](#analyzepathrequest-dto)
+  - [Class Diagram](#class-diagram-1)
+  - [Properties](#properties-1)
+  - [Methods](#methods-1)
+- [MagicResponse DTO](#magicresponse-dto)
+  - [Class Diagram](#class-diagram-2)
+  - [Properties](#properties-2)
+  - [Methods](#methods-2)
+- [Usage Pattern](#usage-pattern)
+  - [AnalyzeContentRequest](#analyzecontentrequest)
+  - [AnalyzePathRequest](#analyzepathrequest)
+  - [MagicResponse](#magicresponse)
+- [DTO Mapping and Serialization](#dto-mapping-and-serialization)
+  - [Serialization Options](#serialization-options)
+- [Dependencies](#dependencies)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 

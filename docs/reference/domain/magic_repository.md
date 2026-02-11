@@ -1,4 +1,21 @@
-# MagicRepository Trait Class Diagram
+# MagicRepository Trait Class Diagram <!-- omit in toc -->
+
+- [Overview](#overview)
+- [Class Diagram](#class-diagram)
+- [Trait Definition](#trait-definition)
+- [Method Specifications](#method-specifications)
+  - [analyze_buffer](#analyze_buffer)
+  - [analyze_file](#analyze_file)
+- [Error Mapping](#error-mapping)
+- [Implementation Requirements](#implementation-requirements)
+- [Trait Bounds](#trait-bounds)
+- [Usage Patterns](#usage-patterns)
+  - [In Application Layer](#in-application-layer)
+  - [In Infrastructure Layer](#in-infrastructure-layer)
+- [Dependency Injection](#dependency-injection)
+- [Design Rationale](#design-rationale)
+
+---
 
 ## Overview
 
