@@ -1,0 +1,8 @@
+#[path = "unit/domain/mod.rs"]
+pub mod domain;
+#[path = "unit/infrastructure/mod.rs"]
+pub mod infrastructure;
+#[path = "unit/application/mod.rs"]
+pub mod application;
+#[path = "unit/presentation/mod.rs"]
+pub mod presentation;
