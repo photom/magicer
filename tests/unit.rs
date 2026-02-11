@@ -1,3 +1,5 @@
+#[path = "common/fake_auth.rs"]
+pub mod fake_auth;
 #[path = "unit/domain/mod.rs"]
 pub mod domain;
 #[path = "unit/infrastructure/mod.rs"]

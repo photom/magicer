@@ -17,6 +17,12 @@ pub struct AnalyzeQuery {
     pub filename: String,
 }
 
+#[derive(Deserialize)]
+pub struct AnalyzePathQuery {
+    pub filename: String,
+    pub path: String,
+}
+
 pub async fn analyze_content(
     State(state): State<Arc<AppState>>,
     Query(query): Query<AnalyzeQuery>,
@@ -34,6 +40,24 @@ pub async fn analyze_content(
     }
 }
 
-pub async fn analyze_path(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
-    "Not implemented"
+pub async fn analyze_path(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<AnalyzePathQuery>,
+) -> impl IntoResponse {
+    let request_id = RequestId::generate();
+    let filename = match WindowsCompatibleFilename::new(&query.filename) {
+        Ok(f) => f,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Invalid filename").into_response(),
+    };
+    
+    // We need to import RelativePath
+    let path = match crate::domain::value_objects::path::RelativePath::new(&query.path) {
+        Ok(p) => p,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Invalid path").into_response(),
+    };
+
+    match state.analyze_path_use_case.execute(request_id, filename, path).await {
+        Ok(result) => (StatusCode::OK, Json(MagicResponse::from(result))).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }

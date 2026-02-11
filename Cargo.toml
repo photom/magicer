@@ -50,6 +50,10 @@ harness = false
 name = "magic_analysis_benchmark"
 harness = false
 
+[[bench]]
+name = "e2e_benchmark"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = true

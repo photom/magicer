@@ -698,6 +698,7 @@ graph TB
 |-----------|-----------|-----------|
 | Magic analysis | benches/magic_analysis_benchmark.rs | criterion |
 | Validation | benches/validation_benchmark.rs | criterion |
+| E2E API | benches/e2e_benchmark.rs | criterion |
 | HTTP throughput | benches/http_throughput_benchmark.rs | criterion |
 
 **Benchmark Scenarios:**
@@ -709,6 +710,9 @@ graph TB
 | Filename validation | Various valid/invalid patterns | Execution time |
 | Path validation | Various path patterns | Execution time |
 | Request serialization | Typical JSON response | Execution time |
+| E2E Ping | N/A | Total request latency |
+| E2E Content | 1KB PDF | Total request latency |
+| E2E Path | Small PNG | Total request latency |
 
 **Performance Targets:**
 
