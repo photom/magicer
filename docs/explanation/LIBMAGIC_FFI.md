@@ -1104,7 +1104,7 @@ graph TB
 | System FDs | ~50 | stdout, stderr, logs, config |
 | **Total Required** | **~2050** | Must set ulimit appropriately |
 | **Recommended Limit** | **4096+** | 2x headroom for safety |
-```
+
 
 **Platform-Specific Mmap Considerations:**
 
@@ -1133,7 +1133,6 @@ graph LR
     
     style L3 fill:#e1ffe1
     style O3 fill:#fff4e1
-```
 ```
 
 **Platform Comparison:**
@@ -1383,17 +1382,16 @@ Signal handlers must be **async-signal-safe**, meaning they can only perform a l
 **Error Recovery:**
 
 The analysis function clears the atomic flag before calling libmagic, then checks it afterward. If SIGBUS occurred, the function returns a specific error indicating file modification during analysis.
-                "File was modified during analysis (SIGBUS received)"
-            ));
-        }
-        
-        // Check for NULL result
-        if result_ptr.is_null() {
-            return self.get_error();
-        }
-        
-        // Safe to convert C string
-        unsafe {
+
+**Recovery Steps:**
+
+| Step | Action | Purpose |
+|------|--------|---------|
+| 1 | Clear flag | Reset from previous operations |
+| 2 | Call libmagic | Perform analysis (may trigger SIGBUS) |
+| 3 | Check flag | Detect if SIGBUS occurred |
+| 4 | Return error | Inform caller of file modification |
+
 **Error Recovery Process:**
 
 ```mermaid
@@ -1415,17 +1413,8 @@ stateDiagram-v2
     CheckFlag --> ReturnError: flag = true
     
     ReturnOK --> [*]: Success
-    ReturnError --> [*]: Error::MmapModified
+    ReturnError --> [*]: MmapModified Error
 ```
-
-**Recovery Steps:**
-
-| Step | Action | Purpose |
-|------|--------|---------|
-| 1 | Clear flag | Reset from previous operations |
-| 2 | Call libmagic | Perform analysis (may trigger SIGBUS) |
-| 3 | Check flag | Detect if SIGBUS occurred |
-| 4 | Return error | Inform caller of file modification |
 
 **Testing SIGBUS Handling:**
 

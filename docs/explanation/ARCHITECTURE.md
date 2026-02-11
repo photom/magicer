@@ -420,21 +420,16 @@ The `analyze_buffer` method accepts byte slices from any source without distinct
 - **Testability:** Easy to test with static byte arrays
 - **Composability:** Works with any `&[u8]` provider
 
-**Example Usage:**
+**Usage Examples:**
 
-```rust
-// Small file: in-memory buffer
-let buffer: Vec<u8> = read_small_file()?;
-repo.analyze_buffer(&buffer, "file.txt")?;
+The unified interface accepts byte slices from various sources:
 
-// Large file: memory-mapped
-let mmap: MmapBuffer = create_mmap(temp_file)?;
-repo.analyze_buffer(mmap.as_ref(), "large.bin")?;
-
-// Static test data
-const TEST_DATA: &[u8] = b"test content";
-repo.analyze_buffer(TEST_DATA, "test.txt")?;
-```
+| Source Type | Description | Use Case |
+|-------------|-------------|----------|
+| Small file buffer | In-memory Vec<u8> from file read | Files under threshold |
+| Memory-mapped file | Mmap slice reference | Large files over threshold |
+| Static test data | Const byte array | Unit testing |
+| Network buffer | HTTP request body bytes | Direct analysis |
 
 **Implementation Note:**
 
@@ -679,8 +674,8 @@ graph TB
     Request1[Request 1] --> UUID1[Generate UUID abc123]
     Request2[Request 2] --> UUID2[Generate UUID abc123]
     
-    UUID1 --> Create1[open O_CREAT|O_EXCL]
-    UUID2 --> Create2[open O_CREAT|O_EXCL]
+    UUID1 --> Create1["open O_CREAT + O_EXCL"]
+    UUID2 --> Create2["open O_CREAT + O_EXCL"]
     
     Create1 --> Check1{File Exists?}
     Create2 --> Check2{File Exists?}
@@ -689,7 +684,7 @@ graph TB
     Check2 -->|Yes| Fail[EEXIST Error]
     
     Fail --> Retry[Generate New UUID def456]
-    Retry --> Create3[open O_CREAT|O_EXCL]
+    Retry --> Create3["open O_CREAT + O_EXCL"]
     Create3 --> Success2[Create Success]
     
     style Success1 fill:#e1ffe1
@@ -699,52 +694,54 @@ graph TB
 
 **Implementation Requirements:**
 
-```rust
-use std::fs::OpenOptions;
-use std::os::unix::fs::OpenOptionsExt;
+The temporary file creation process uses atomic file operations with retry logic to handle collisions.
 
-// Atomic temp file creation with O_EXCL
-fn create_temp_file_atomic(base_dir: &Path) -> Result<File> {
-    const MAX_RETRIES: usize = 3;
+**Atomic Creation Process:**
+
+| Step | Action | Purpose |
+|------|--------|---------|
+| 1. Generate unique filename | UUID + timestamp + random suffix | Minimize collision probability |
+| 2. Open with create_new flag | O_CREAT + O_EXCL flags | Atomic existence check and creation |
+| 3. Check for collision | ErrorKind::AlreadyExists | Detect race condition |
+| 4. Retry on collision | Generate new filename | Handle collision gracefully |
+| 5. Fail after max retries | Return error | Prevent infinite loops |
+
+**Filename Generation Strategy:**
+
+The unique filename combines three entropy sources to minimize collision probability:
+
+| Component | Type | Entropy | Example |
+|-----------|------|---------|---------|
+| Request ID | UUID v4 | 122 bits | `550e8400-e29b-41d4-a716-446655440000` |
+| Timestamp | Nanoseconds since epoch | Time-based | `1707654321000000000` |
+| Random suffix | 32-bit random | 32 bits | `3847562109` |
+| **Combined** | - | **~154 bits** | `550e8400_1707654321_3847562109.tmp` |
+
+**Retry Logic:**
+
+```mermaid
+sequenceDiagram
+    participant App
+    participant FS as Filesystem
     
-    for attempt in 0..MAX_RETRIES {
-        let filename = generate_unique_filename();
-        let path = base_dir.join(&filename);
+    loop Retry up to 3 times
+        App->>App: Generate unique filename
+        App->>FS: open with O_CREAT + O_EXCL
         
-        match OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)  // O_CREAT | O_EXCL
-            .mode(0o600)       // Owner only
-            .open(&path)
-        {
-            Ok(file) => return Ok(file),
-            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
-                // Collision detected, retry with new name
-                tracing::warn!(
-                    "Temp file collision on attempt {}: {}",
-                    attempt + 1,
-                    filename
-                );
-                continue;
-            }
-            Err(e) => return Err(e.into()),
-        }
-    }
+        alt File does not exist
+            FS-->>App: File handle (success)
+            Note over App: Exit loop
+        else File exists (collision)
+            FS-->>App: EEXIST error
+            Note over App: Log warning, continue loop
+        end
+    end
     
-    Err(Error::TempFileCreation("Max retries exceeded"))
-}
-
-fn generate_unique_filename() -> String {
-    let request_id = Uuid::new_v4();
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let random = rand::random::<u32>();
-    
-    format!("{}_{}_{}.tmp", request_id, timestamp, random)
-}
+    alt Succeeded within retries
+        App->>App: Return file handle
+    else Max retries exceeded
+        App->>App: Return error
+    end
 ```
 
 **Collision Probability Analysis:**
@@ -761,19 +758,19 @@ fn generate_unique_filename() -> String {
 ```mermaid
 stateDiagram-v2
     [*] --> Attempt1: Generate filename
-    Attempt1 --> Open1: open(O_CREAT|O_EXCL)
+    Attempt1 --> Open1: open with O_CREAT + O_EXCL
     
     Open1 --> Success: File created atomically
     Open1 --> Collision: EEXIST
     
     Collision --> Attempt2: Generate new filename
-    Attempt2 --> Open2: open(O_CREAT|O_EXCL)
+    Attempt2 --> Open2: open with O_CREAT + O_EXCL
     
     Open2 --> Success
     Open2 --> Collision2: EEXIST (rare)
     
     Collision2 --> Attempt3: Generate new filename
-    Attempt3 --> Open3: open(O_CREAT|O_EXCL)
+    Attempt3 --> Open3: open with O_CREAT + O_EXCL
     
     Open3 --> Success
     Open3 --> Exhausted: Max retries
@@ -823,13 +820,14 @@ stateDiagram-v2
 
 **Monitoring:**
 
-```rust
-// Metrics for temp file creation
-metrics::counter!("temp_file_creation_total").increment(1);
-metrics::counter!("temp_file_collision_total").increment(1); // On EEXIST
-metrics::counter!("temp_file_retry_total").increment(1);      // On retry
-metrics::counter!("temp_file_retry_exhausted_total").increment(1); // On max retries
-```
+Track temporary file operations with metrics:
+
+| Metric | Event | Purpose |
+|--------|-------|---------|
+| `temp_file_creation_total` | File created successfully | Count total creations |
+| `temp_file_collision_total` | EEXIST error occurred | Track collision frequency |
+| `temp_file_retry_total` | Retry attempt made | Monitor retry patterns |
+| `temp_file_retry_exhausted_total` | Max retries exceeded | Alert on failures |
 
 **Implementation Location:**
 
@@ -1841,34 +1839,33 @@ sequenceDiagram
    - For 5xx errors: Log full context internally, return generic message externally
    - Always include request_id for correlation
 
-**Implementation Example:**
+**Implementation Approach:**
 
-```rust
-// Infrastructure: Capture context at error site
-match std::fs::File::create(&temp_path) {
-    Ok(file) => Ok(file),
-    Err(e) => Err(DomainError::Storage(format!(
-        "Failed to create temp file: {}",
-        e
-    )))
-}
+Error messages should be constructed at the point of failure to include operation context and root cause.
 
-// Infrastructure: Include operation details
-match file.write_all(&chunk) {
-    Ok(_) => Ok(()),
-    Err(e) => Err(DomainError::Storage(format!(
-        "Failed to write chunk at offset {}: {}",
-        offset, e
-    )))
-}
+**Error Construction Pattern:**
 
-// Application: Preserve context when wrapping
-use_case_result.map_err(|domain_err| {
-    ApplicationError::StorageError {
-        context: domain_err.to_string(), // Preserves infrastructure context
-        request_id: request.id.clone(),
-    }
-})?;
+| Layer | Responsibility | Example Context |
+|-------|----------------|-----------------|
+| Infrastructure | Capture OS error and operation | "Failed to create temp file: {os_error}" |
+| Infrastructure | Include operation details | "Failed to write chunk at offset {offset}: {os_error}" |
+| Application | Wrap with request context | Preserve domain error + add request_id |
+| Presentation | Convert to HTTP response | Map to status code, sanitize for client |
+
+**Context Preservation:**
+
+```mermaid
+graph LR
+    Infra[Infrastructure Layer] --> |Domain Error| App[Application Layer]
+    App --> |Application Error| Pres[Presentation Layer]
+    
+    Infra --> Details["• Operation name<br/>• Root cause<br/>• Relevant details"]
+    App --> Preserve["• Preserve infra context<br/>• Add request ID<br/>• Add correlation"]
+    Pres --> Response["• Map to HTTP status<br/>• Sanitize 5xx errors<br/>• Full details for 4xx"]
+    
+    style Details fill:#e1ffe1
+    style Preserve fill:#e1f5ff
+    style Response fill:#fff4e1
 ```
 
 **Testing Error Context:**
@@ -2051,30 +2048,26 @@ Error messages must include context about which operation failed:
 
 **Platform-Specific Implementation:**
 
-Use `libc::statvfs` on Linux:
+Use `libc::statvfs` system call on Linux to retrieve filesystem statistics and calculate available space.
 
-```rust
-use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
-use std::ffi::CString;
+**Implementation Strategy:**
 
-pub fn get_available_space_mb(path: &Path) -> Result<u64, std::io::Error> {
-    let path_cstr = CString::new(path.as_os_str().as_bytes())?;
-    
-    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
-    let result = unsafe { libc::statvfs(path_cstr.as_ptr(), &mut stat) };
-    
-    if result != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    
-    // Available space in bytes: f_bavail * f_frsize
-    let available_bytes = stat.f_bavail * stat.f_frsize;
-    
-    // Convert to MB
-    Ok(available_bytes / (1024 * 1024))
-}
-```
+| Step | Action | Purpose |
+|------|--------|---------|
+| 1 | Convert path to C string | FFI compatibility |
+| 2 | Call `libc::statvfs` | Get filesystem statistics |
+| 3 | Check return value | Detect syscall errors |
+| 4 | Calculate available bytes | `f_bavail * f_frsize` |
+| 5 | Convert to megabytes | User-friendly units |
+
+**Filesystem Statistics:**
+
+| Field | Meaning | Usage |
+|-------|---------|-------|
+| `f_bavail` | Available blocks for non-root | Blocks accessible to application |
+| `f_frsize` | Fundamental block size | Bytes per block |
+| `f_blocks` | Total blocks | Total filesystem capacity |
+| `f_bfree` | Free blocks (including reserved) | Not used (includes root-reserved space) |
 
 **Testing Requirements:**
 
@@ -2100,29 +2093,23 @@ pub fn get_available_space_mb(path: &Path) -> Result<u64, std::io::Error> {
 
 **Error Response Examples:**
 
-Pre-flight check failure:
-```
-HTTP/1.1 507 Insufficient Storage
-Content-Type: application/json
+Pre-flight check failure response format:
 
-{
-  "error": "Insufficient storage space for analysis",
-  "details": "Temp directory has 512MB available, but 1024MB minimum required",
-  "request_id": "abc-123"
-}
-```
+| Field | Value | Purpose |
+|-------|-------|---------|
+| Status | 507 Insufficient Storage | HTTP status code |
+| Error message | "Insufficient storage space for analysis" | Human-readable description |
+| Details | Available vs required space | Actionable information |
+| Request ID | UUID | Correlation for debugging |
 
-Write failure:
-```
-HTTP/1.1 507 Insufficient Storage
-Content-Type: application/json
+Write failure response format:
 
-{
-  "error": "Disk space exhausted during file processing",
-  "details": "Failed to write chunk at offset 52428800 (50MB): No space left on device",
-  "request_id": "abc-123"
-}
-```
+| Field | Value | Purpose |
+|-------|-------|---------|
+| Status | 507 Insufficient Storage | HTTP status code |
+| Error message | "Disk space exhausted during file processing" | Human-readable description |
+| Details | Failed offset and OS error | Debug information |
+| Request ID | UUID | Correlation for debugging |
 
 **Monitoring and Observability:**
 
@@ -2280,33 +2267,25 @@ sequenceDiagram
 
 **Implementation Pattern:**
 
-**Correct (Async):**
+The implementation must use Tokio's async filesystem operations for all file I/O.
 
-```rust
-use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
+**Async Operation Requirements:**
 
-pub async fn write_temp_file(path: &Path, data: &[u8]) -> Result<()> {
-    let mut file = File::create(path).await?;  // ✅ Async create
-    file.write_all(data).await?;                // ✅ Async write
-    file.flush().await?;                        // ✅ Async flush
-    Ok(())
-}
-```
+| Operation Type | Correct API | Purpose |
+|----------------|-------------|---------|
+| File creation | `tokio::fs::File::create().await` | Non-blocking file creation |
+| Write data | `file.write_all().await` | Non-blocking write |
+| Flush buffer | `file.flush().await` | Non-blocking flush to disk |
+| Sync metadata | `file.sync_all().await` | Non-blocking fsync |
 
-**Incorrect (Blocking):**
+**Correct vs Incorrect Pattern:**
 
-```rust
-use std::fs::File;
-use std::io::Write;
+The key difference is using Tokio's async file operations instead of standard library blocking operations.
 
-pub async fn write_temp_file(path: &Path, data: &[u8]) -> Result<()> {
-    let mut file = File::create(path)?;  // ❌ Blocks Tokio worker
-    file.write_all(data)?;                // ❌ Blocks Tokio worker
-    file.flush()?;                        // ❌ Blocks Tokio worker
-    Ok(())
-}
-```
+| Approach | File Creation | Write Operation | Flush Operation | Worker Impact |
+|----------|---------------|-----------------|-----------------|---------------|
+| **Correct (Async)** | `tokio::fs::File::create().await` | `file.write_all().await` | `file.flush().await` | ✅ Worker free during I/O |
+| **Incorrect (Blocking)** | `std::fs::File::create()` | `file.write_all()` | `file.flush()` | ❌ Worker blocked during I/O |
 
 **Streaming with Async I/O:**
 
@@ -2372,60 +2351,46 @@ graph TB
 
 ❌ **Never use synchronous I/O in async functions:**
 
-```rust
-// FORBIDDEN: Blocks Tokio worker
-async fn bad_handler() {
-    let data = std::fs::read("/path/to/file").unwrap(); // ❌ Blocking!
-    // ...
-}
+Synchronous operations block Tokio workers and degrade performance.
 
-// FORBIDDEN: Blocks during network I/O
-async fn bad_network() {
-    let socket = std::net::TcpStream::connect("127.0.0.1:8080").unwrap(); // ❌ Blocking!
-    // ...
-}
-```
+| Forbidden Pattern | Problem | Impact |
+|-------------------|---------|--------|
+| `std::fs::read()` in async fn | Blocks worker thread | Reduced concurrency |
+| `std::net::TcpStream::connect()` in async fn | Blocks worker thread | Poor scalability |
+| `File::create()` from std | Blocks during syscall | Latency spikes |
 
 **Required Patterns:**
 
 ✅ **Always use async I/O:**
 
-```rust
-// CORRECT: Async filesystem I/O
-async fn good_handler() {
-    let data = tokio::fs::read("/path/to/file").await?; // ✅ Async
-    // ...
-}
+All I/O operations must use Tokio's async APIs to maintain non-blocking behavior.
 
-// CORRECT: Async network I/O
-async fn good_network() {
-    let socket = tokio::net::TcpStream::connect("127.0.0.1:8080").await?; // ✅ Async
-    // ...
-}
-```
+| Correct Pattern | Benefit | Use Case |
+|-----------------|---------|----------|
+| `tokio::fs::read().await` | Non-blocking filesystem read | Load configuration, read files |
+| `tokio::net::TcpStream::connect().await` | Non-blocking network connection | HTTP clients, database connections |
+| `tokio::fs::File::create().await` | Non-blocking file creation | Temporary files, logging |
 
-**HTTP Request Body Streaming (Async):**
+**HTTP Request Body Streaming Pattern:**
 
-```rust
-use axum::body::Body;
-use tokio::io::AsyncWriteExt;
-use tokio_stream::StreamExt;
-
-pub async fn stream_to_temp_file(body: Body) -> Result<TempFile> {
-    let mut stream = body.into_data_stream();  // ✅ Async stream
+The request body streaming process demonstrates proper async I/O usage for processing large uploads.
     let mut file = tokio::fs::File::create(temp_path).await?;  // ✅ Async create
     
     while let Some(chunk) = stream.next().await {  // ✅ Async iteration
-        let chunk = chunk?;
-        file.write_all(&chunk).await?;  // ✅ Async write
-    }
-    
-    file.flush().await?;  // ✅ Async flush
-    file.sync_all().await?;  // ✅ Async sync
-    
-    Ok(TempFile::new(temp_path))
-}
-```
+**HTTP Request Body Streaming Pattern:**
+
+The request body streaming process demonstrates proper async I/O usage for processing large uploads.
+
+**Streaming Process:**
+
+| Step | Operation | Async API | Purpose |
+|------|-----------|-----------|---------|
+| 1 | Convert body to stream | `body.into_data_stream()` | Get async chunk iterator |
+| 2 | Create temp file | `tokio::fs::File::create().await` | Non-blocking file creation |
+| 3 | Process chunks | `stream.next().await` | Non-blocking chunk retrieval |
+| 4 | Write chunks | `file.write_all().await` | Non-blocking write operation |
+| 5 | Flush buffer | `file.flush().await` | Non-blocking buffer flush |
+| 6 | Sync to disk | `file.sync_all().await` | Non-blocking fsync |
 
 **Mmap Integration (Special Case):**
 
@@ -2436,15 +2401,14 @@ Memory-mapped I/O is synchronous by nature but acceptable because:
 3. **Isolated:** Created in `spawn_blocking` if mmap() call is slow
 4. **Read Access:** Page faults for reads are transparent to async runtime
 
-```rust
-// Mmap setup in spawn_blocking (if needed)
-let mmap = tokio::task::spawn_blocking(move || {
-    Mmap::open(&temp_file_path)  // Sync mmap() call
-}).await??;
+**Mmap Isolation Strategy:**
 
-// Reading from mmap is safe (page faults handled by kernel)
-let result = magic.analyze_buffer(mmap.as_ref())?;
-```
+| Scenario | Approach | Reason |
+|----------|----------|--------|
+| Small files | Direct mmap creation | Fast syscall (<1μs) |
+| Large files | `spawn_blocking` wrapper | Isolate potential slowdown |
+| Mmap reads | Direct access | Page faults handled by kernel |
+| Mmap cleanup | Direct munmap | Fast syscall |
 
 **Performance Characteristics:**
 
@@ -2458,33 +2422,27 @@ let result = magic.analyze_buffer(mmap.as_ref())?;
 
 **Testing Async I/O:**
 
-```rust
-#[tokio::test]
-async fn test_all_io_is_async() {
-    // This test compiles only if all I/O uses tokio types
-    let file = tokio::fs::File::create("test.tmp").await.unwrap();
-    let _metadata = tokio::fs::metadata("test.tmp").await.unwrap();
-    tokio::fs::remove_file("test.tmp").await.unwrap();
-}
+Test verification ensures all I/O operations use async APIs.
 
-// Lint: Detect blocking I/O in async functions
-#[tokio::test]
-async fn test_no_blocking_io() {
-    // Use clippy::await_holding_lock
-    // Use clippy::blocking_in_async
-}
-```
+**Test Strategy:**
+
+| Test Type | Purpose | Implementation |
+|-----------|---------|----------------|
+| Compilation test | Verify Tokio types used | Use `#[tokio::test]` with tokio types only |
+| Lint test | Detect blocking I/O | Enable clippy `blocking_in_async` |
+| Runtime test | Verify non-blocking behavior | Monitor worker thread activity |
 
 **Linting Rules:**
 
-Enable Clippy lints to catch blocking I/O:
+Enable Clippy lints to catch blocking I/O at compile time.
 
-```toml
-# Cargo.toml
-[lints.clippy]
-blocking_in_async = "deny"           # Catch std::fs in async
-await_holding_lock = "warn"          # Avoid long lock holds
-```
+**Required Lints:**
+
+| Lint | Level | Purpose |
+|------|-------|---------|
+| `blocking_in_async` | deny | Catch `std::fs` usage in async functions |
+| `await_holding_lock` | warn | Avoid holding locks across await points |
+| `await_holding_refcell_ref` | warn | Avoid RefCell borrows across awaits |
 
 **Documentation Requirements:**
 
@@ -2493,23 +2451,18 @@ All async functions performing I/O must document:
 - Expected latency range
 - Cancellation safety (if applicable)
 
-Example:
-```rust
-/// Streams request body to temporary file asynchronously.
-///
-/// # I/O Operations
-/// - Creates temp file (async)
-/// - Writes chunks in 64KB increments (async)
-/// - Flushes and syncs to disk (async)
-///
-/// # Performance
-/// - Typical: 500ms for 100MB file (SSD)
-/// - Network-bound for slow clients
-///
-/// # Cancellation
-/// - Safe: Partial writes cleaned up via Drop
-pub async fn stream_to_temp(body: Body) -> Result<TempFile>
-```
+**Documentation Template:**
+
+| Section | Content | Purpose |
+|---------|---------|---------|
+| Summary | Brief operation description | Function purpose |
+| I/O Operations | List of I/O calls made | Performance expectations |
+| Latency Range | Expected duration | Capacity planning |
+| Cancellation | Drop behavior | Safety guarantees |
+
+**Example Documentation Format:**
+
+The function documentation should describe I/O operations, performance characteristics, and cancellation behavior for async functions performing I/O operations.
 
 **Architecture Compliance:**
 
