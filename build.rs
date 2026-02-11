@@ -22,6 +22,14 @@ fn main() {
         Command::new("tar").arg("xzf").arg(&zlib_tarball).current_dir(&build_dir).status().unwrap();
         
         let zlib_src = build_dir.join(format!("zlib-{}", zlib_version));
+
+        // OpenSSF Hardening Flags
+        let cflags = "-O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -fstack-clash-protection -fcf-protection -fPIC -Wall -Wformat -Wformat-security";
+        let ldflags = "-Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack";
+
+        env::set_var("CFLAGS", cflags);
+        env::set_var("LDFLAGS", ldflags);
+
         Command::new("./configure").arg(format!("--prefix={}", install_dir.display())).arg("--static").current_dir(&zlib_src).status().unwrap();
         Command::new("make").arg("-j").arg(num_cpus::get().to_string()).current_dir(&zlib_src).status().unwrap();
         Command::new("make").arg("install").current_dir(&zlib_src).status().unwrap();
@@ -37,9 +45,9 @@ fn main() {
         
         let magic_src = build_dir.join(format!("file-{}", magic_version));
         
-        // Point libmagic to our local zlib
-        env::set_var("CFLAGS", format!("-I{}/include", install_dir.display()));
-        env::set_var("LDFLAGS", format!("-L{}/lib", install_dir.display()));
+        // Point libmagic to our local zlib AND apply hardening
+        env::set_var("CFLAGS", format!("{} -I{}/include", cflags, install_dir.display()));
+        env::set_var("LDFLAGS", format!("{} -L{}/lib", ldflags, install_dir.display()));
         
         Command::new("./configure")
             .arg(format!("--prefix={}", install_dir.display()))
