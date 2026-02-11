@@ -1,0 +1,138 @@
+# RequestId Value Object Class Diagram
+
+## Overview
+
+The `RequestId` value object wraps UUID v4 for distributed tracing and request correlation.
+
+## Class Diagram
+
+```mermaid
+classDiagram
+    class RequestId {
+        -Uuid value
+        +new() Self
+        +from_uuid(uuid: Uuid) Self
+        +parse(s: &str) Result~Self, ValidationError~
+        +as_uuid() &Uuid
+        +to_string() String
+        +as_hyphenated() String
+    }
+    
+    class Uuid {
+        <<external::uuid>>
+    }
+    
+    class ValidationError {
+        <<enumeration>>
+        InvalidUuidFormat(String)
+        NotV4Uuid
+    }
+    
+    RequestId *-- Uuid : contains
+    RequestId ..> ValidationError : creates
+    
+    note for RequestId "Immutable value object\nDerives: Clone, Copy, Eq, PartialEq, Hash, Debug\nUUID v4 (random)"
+```
+
+## Creation Methods
+
+```mermaid
+flowchart TD
+    New[new] --> Generate[Generate UUID v4]
+    Generate --> Success1([RequestId])
+    
+    FromUuid[from_uuid] --> Wrap[Wrap existing UUID]
+    Wrap --> Success2([RequestId])
+    
+    Parse[parse str] --> ValidateFormat{Valid UUID?}
+    ValidateFormat -->|No| ErrFormat[ValidationError::InvalidUuidFormat]
+    ValidateFormat -->|Yes| CheckV4{Is v4?}
+    CheckV4 -->|No| ErrV4[ValidationError::NotV4Uuid]
+    CheckV4 -->|Yes| Success3([RequestId])
+    
+    style Success1 fill:#90EE90
+    style Success2 fill:#90EE90
+    style Success3 fill:#90EE90
+    style ErrFormat fill:#FFB6C1
+    style ErrV4 fill:#FFB6C1
+```
+
+## Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `value` | `Uuid` | UUID v4 instance |
+
+## Methods
+
+| Method | Parameters | Return Type | Description |
+|--------|------------|-------------|-------------|
+| `new` | - | `Self` | Generate new UUID v4 |
+| `from_uuid` | `uuid: Uuid` | `Self` | Wrap existing UUID (no validation) |
+| `parse` | `s: &str` | `Result<Self, ValidationError>` | Parse from string, validate v4 |
+| `as_uuid` | `&self` | `&Uuid` | Borrow inner UUID |
+| `to_string` | `&self` | `String` | Convert to hyphenated string |
+| `as_hyphenated` | `&self` | `String` | Explicit hyphenated format |
+
+## Invariants
+
+1. Always UUID v4 (random)
+2. Never null or invalid
+3. Immutable after construction
+4. Globally unique (probabilistically)
+
+## Usage Example
+
+```rust
+// Generate new request ID
+let request_id = RequestId::new();
+println!("Request: {}", request_id.to_string());
+// Output: "550e8400-e29b-41d4-a716-446655440000"
+
+// Parse from string
+let request_id = RequestId::parse("550e8400-e29b-41d4-a716-446655440000")?;
+
+// Invalid format
+let result = RequestId::parse("not-a-uuid");
+assert!(matches!(result, Err(ValidationError::InvalidUuidFormat(_))));
+
+// Invalid version (UUID v1)
+let uuid_v1 = Uuid::parse_str("550e8400-e29b-11d4-a716-446655440000")?;
+let result = RequestId::from_uuid(uuid_v1);
+// Note: from_uuid doesn't validate, use parse for validation
+```
+
+## UUID v4 Format
+
+```
+xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+
+x: any hexadecimal digit (0-9, a-f)
+4: version identifier (v4)
+y: variant identifier (8, 9, a, or b)
+
+Example: 550e8400-e29b-41d4-a716-446655440000
+         └──────┘ └──┘ │└─┘ └──┘ └──────────┘
+         time_low  mid │var  node
+                      version
+```
+
+## Trait Implementations
+
+| Trait | Purpose |
+|-------|---------|
+| `Clone, Copy` | Lightweight copying (16 bytes) |
+| `Eq, PartialEq` | Value equality comparison |
+| `Hash` | HashMap/HashSet key usage |
+| `Debug` | Debug formatting |
+| `Display` | User-facing string conversion |
+| `FromStr` | Parse from string |
+| `Serialize, Deserialize` | JSON/TOML serialization |
+
+## Design Rationale
+
+- **Distributed Tracing**: Enables request correlation across services and logs
+- **UUID v4**: Random generation ensures uniqueness without coordination
+- **Type Safety**: Wrapper prevents mixing with other UUIDs or strings
+- **HTTP Header**: Suitable for `X-Request-ID` header format
+- **Value Object Pattern**: Immutable, self-identifying, copyable
