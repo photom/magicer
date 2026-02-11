@@ -6,7 +6,6 @@ use magicer::presentation::state::app_state::AppState;
 use magicer::presentation::http::router::create_router;
 use magicer::presentation::http::middleware::request_id;
 use magicer::infrastructure::config::server_config::ServerConfig;
-use magicer::infrastructure::magic::fake_magic_repository::FakeMagicRepository;
 use magicer::infrastructure::filesystem::sandbox::PathSandbox;
 use magicer::infrastructure::auth::basic_auth_service::BasicAuthService;
 
@@ -20,9 +19,9 @@ async fn main() {
     tracing::info!("Server configuration loaded: {:?}", config);
 
     // Initialize infrastructure
-    // Using FakeMagicRepository because libmagic is not installed in this environment
-    // In production, we would use LibmagicRepository::new().unwrap()
-    let magic_repo = Arc::new(FakeMagicRepository::new().expect("Failed to initialize MagicRepository"));
+    // Use real LibmagicRepository built from source
+    let magic_repo = Arc::new(magicer::infrastructure::magic::libmagic_repository::LibmagicRepository::new()
+        .expect("Failed to initialize real libmagic repository"));
     
     let sandbox = Arc::new(PathSandbox::new(PathBuf::from(&config.analysis.temp_dir)));
     

@@ -6,7 +6,7 @@ pub const MAGIC_NONE: c_int = 0x000000;
 pub const MAGIC_MIME_TYPE: c_int = 0x000010;
 pub const MAGIC_ERROR: c_int = 0x000200;
 
-// #[link(name = "magic")]
+#[link(name = "magic")]
 extern "C" {
     pub fn magic_open(flags: c_int) -> MagicT;
     pub fn magic_close(ms: MagicT);

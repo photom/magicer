@@ -86,6 +86,9 @@ This project builds libmagic bindings from scratch as an educational exercise ("
 
 Understanding the C API structure before designing bindings.
 
+**Library Source:** [https://github.com/file/file](https://github.com/file/file)  
+**Target Version:** 46
+
 ### Core C Functions
 
 The libmagic C API provides functions for initialization, configuration, analysis, error handling, and cleanup.
@@ -1608,7 +1611,7 @@ graph TB
 
 | Attack | Mitigation |
 |--------|-----------|
-| Buffer overflow in libmagic | Use latest libmagic version |
+| Buffer overflow in libmagic | Use libmagic version 46 or latest |
 | Malformed file causes crash | Timeout + error handling |
 | Resource exhaustion | Size limits + connection limits |
 | Directory traversal | Path sandbox validation |

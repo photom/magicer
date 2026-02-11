@@ -22,11 +22,14 @@ impl MagicCookie {
 
     pub fn load(&self, path: Option<&str>) -> Result<(), MagicError> {
         let c_path = match path {
-            Some(p) => CString::new(p).map_err(|_| MagicError::DatabaseLoadFailed("Invalid path".to_string()))?,
-            None => unsafe { CString::from_raw(ptr::null_mut()) }, // This is not right, but magic_load(ms, NULL) is what we want
+            Some(p) => Some(CString::new(p).map_err(|_| MagicError::DatabaseLoadFailed("Invalid path".to_string()))?),
+            None => None,
         };
         
-        let path_ptr = if path.is_some() { c_path.as_ptr() } else { ptr::null() };
+        let path_ptr = match &c_path {
+            Some(p) => p.as_ptr(),
+            None => ptr::null(),
+        };
 
         let lock = self.inner.lock().unwrap();
         let result = unsafe { magic_load(*lock, path_ptr) };
