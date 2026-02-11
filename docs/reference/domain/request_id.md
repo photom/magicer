@@ -81,26 +81,21 @@ flowchart TD
 3. Immutable after construction
 4. Globally unique (probabilistically)
 
-## Usage Example
+## Usage Scenarios
 
-```rust
-// Generate new request ID
-let request_id = RequestId::new();
-println!("Request: {}", request_id.to_string());
-// Output: "550e8400-e29b-41d4-a716-446655440000"
+### Generate New Request ID
 
-// Parse from string
-let request_id = RequestId::parse("550e8400-e29b-41d4-a716-446655440000")?;
+When creating a new RequestId, a random UUID v4 is automatically generated. The resulting identifier can be converted to a hyphenated string format like "550e8400-e29b-41d4-a716-446655440000".
 
-// Invalid format
-let result = RequestId::parse("not-a-uuid");
-assert!(matches!(result, Err(ValidationError::InvalidUuidFormat(_))));
+### Parse from String
 
-// Invalid version (UUID v1)
-let uuid_v1 = Uuid::parse_str("550e8400-e29b-11d4-a716-446655440000")?;
-let result = RequestId::from_uuid(uuid_v1);
-// Note: from_uuid doesn't validate, use parse for validation
-```
+When parsing a RequestId from a valid UUID v4 string like "550e8400-e29b-41d4-a716-446655440000", the value object is successfully created.
+
+### Invalid Scenarios
+
+**Invalid Format:** Parsing fails with InvalidUuidFormat validation error when the string is not a valid UUID format, such as "not-a-uuid".
+
+**Invalid Version:** When wrapping an existing UUID that is not version 4 (such as a UUID v1 with identifier "550e8400-e29b-11d4-a716-446655440000"), the from_uuid method does not validate the version. Use the parse method for validation to ensure only UUID v4 is accepted.
 
 ## UUID v4 Format
 

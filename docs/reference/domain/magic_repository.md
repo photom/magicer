@@ -35,20 +35,7 @@ classDiagram
 
 ## Trait Definition
 
-```rust
-pub trait MagicRepository: Send + Sync {
-    fn analyze_buffer(
-        &self,
-        data: &[u8],
-        filename: &str,
-    ) -> Result<MagicResult, DomainError>;
-    
-    fn analyze_file(
-        &self,
-        path: &Path,
-    ) -> Result<MagicResult, DomainError>;
-}
-```
+The MagicRepository trait defines two methods for file magic analysis. The analyze_buffer method accepts a byte slice and filename, returning either a MagicResult or DomainError. The analyze_file method accepts a Path reference and returns the same result type. Both methods require Send and Sync trait bounds to enable thread-safe usage in async contexts.
 
 ## Method Specifications
 
@@ -150,50 +137,22 @@ Implementations MUST:
 
 ## Trait Bounds
 
-```rust
-pub trait MagicRepository: Send + Sync {
-    // Methods...
-}
-```
-
 | Bound | Purpose |
 |-------|---------|
-| `Send` | Can be transferred between threads |
-| `Sync` | Can be shared between threads (via `Arc`) |
+| Send | Enables transfer between threads |
+| Sync | Enables sharing between threads via Arc |
 
-Required for Tokio async runtime and Axum state sharing.
+These bounds are required for Tokio async runtime and Axum state sharing, ensuring the repository can be safely used in concurrent contexts.
 
-## Usage Example
+## Usage Patterns
 
-```rust
-// In application layer (use case)
-pub struct AnalyzeContentUseCase<R: MagicRepository> {
-    repository: Arc<R>,
-}
+### In Application Layer
 
-impl<R: MagicRepository> AnalyzeContentUseCase<R> {
-    pub fn execute(&self, data: &[u8], filename: &str) -> Result<MagicResult, ApplicationError> {
-        self.repository
-            .analyze_buffer(data, filename)
-            .map_err(ApplicationError::from)
-    }
-}
+Use cases depend on the MagicRepository trait through generic type parameters or trait objects wrapped in Arc. The use case calls repository methods and maps domain errors to application errors.
 
-// In infrastructure layer (implementation)
-pub struct LibmagicRepository {
-    cookie: Cookie,
-}
+### In Infrastructure Layer
 
-impl MagicRepository for LibmagicRepository {
-    fn analyze_buffer(&self, data: &[u8], filename: &str) -> Result<MagicResult, DomainError> {
-        // Implementation using libmagic FFI
-    }
-    
-    fn analyze_file(&self, path: &Path) -> Result<MagicResult, DomainError> {
-        // Implementation using libmagic FFI
-    }
-}
-```
+Concrete implementations like LibmagicRepository implement the MagicRepository trait. The implementation holds the necessary state (such as a libmagic cookie handle) and provides concrete logic for both analyze_buffer and analyze_file methods using libmagic FFI bindings.
 
 ## Dependency Injection
 

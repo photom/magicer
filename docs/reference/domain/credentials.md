@@ -113,49 +113,66 @@ graph TD
     style Prevent fill:#90EE90
 ```
 
-## Usage Example
+## Usage Scenarios
 
-```rust
-// Valid credentials
-let creds = BasicAuthCredentials::new(
-    "admin".to_string(),
-    "securepassword123".to_string()
-)?;
+### Valid Credentials
 
-// Verify credentials (constant-time)
-assert!(creds.verify("admin", "securepassword123"));
-assert!(!creds.verify("admin", "wrongpassword"));
+When constructing BasicAuthCredentials with valid username "admin" and password "securepassword123", the value object is successfully created. The verify method returns true when called with matching credentials and false when called with incorrect credentials, using constant-time comparison to prevent timing attacks.
 
-// Invalid: empty username
-let result = BasicAuthCredentials::new("".to_string(), "password".to_string());
-assert!(matches!(result, Err(ValidationError::EmptyUsername)));
+### Invalid Scenarios
 
-// Invalid: username contains colon
-let result = BasicAuthCredentials::new("user:name".to_string(), "password".to_string());
-assert!(matches!(result, Err(ValidationError::UsernameContainsColon)));
+**Empty Username:** Construction fails with EmptyUsername validation error when username is an empty string.
 
-// Invalid: password too short
-let result = BasicAuthCredentials::new("admin".to_string(), "pass".to_string());
-assert!(matches!(result, Err(ValidationError::PasswordTooShort(4))));
-```
+**Username Contains Colon:** Construction fails with UsernameContainsColon validation error when username contains a colon character (e.g., "user:name"), as this would create ambiguity in the Basic Auth format.
+
+**Password Too Short:** Construction fails with PasswordTooShort validation error when password is less than 8 characters (e.g., "pass" with length 4).
 
 ## HTTP Basic Auth Format
 
-```
-Authorization: Basic base64(username:password)
+The HTTP Basic Authentication header consists of the word "Basic" followed by a space and a Base64-encoded string containing the username and password separated by a colon.
 
-Example:
-  Username: admin
-  Password: secret123
-  
-  Encoded: Basic YWRtaW46c2VjcmV0MTIz
-  
-  Decoded: admin:secret123
-           └───┘ └──────┘
-           user  password
-           
-Note: Username cannot contain ':' to avoid ambiguity
+**Example:**
+
+| Component | Value |
+|-----------|-------|
+| Username | admin |
+| Password | secret123 |
+| Plain text | admin:secret123 |
+| Base64 encoded | YWRtaW46c2VjcmV0MTIz |
+| HTTP Header | Authorization: Basic YWRtaW46c2VjcmV0MTIz |
+
+**Encoding Process:**
+
+```mermaid
+flowchart LR
+    Username[Username: admin] --> Concat[Concatenate with colon]
+    Password[Password: secret123] --> Concat
+    Concat --> Plain[Plain text: admin:secret123]
+    Plain --> Encode[Base64 encode]
+    Encode --> Encoded[YWRtaW46c2VjcmV0MTIz]
+    Encoded --> Prepend[Prepend 'Basic ']
+    Prepend --> Header[Authorization: Basic YWRtaW46c2VjcmV0MTIz]
+    
+    style Header fill:#90EE90
 ```
+
+**Decoding Process:**
+
+```mermaid
+flowchart LR
+    Header[Authorization: Basic YWRtaW46c2VjcmV0MTIz] --> Remove[Remove 'Basic ' prefix]
+    Remove --> Encoded[YWRtaW46c2VjcmV0MTIz]
+    Encoded --> Decode[Base64 decode]
+    Decode --> Plain[admin:secret123]
+    Plain --> Split[Split by first colon]
+    Split --> Username[Username: admin]
+    Split --> Password[Password: secret123]
+    
+    style Username fill:#90EE90
+    style Password fill:#90EE90
+```
+
+**Important Constraint:** The username cannot contain a colon character because the colon is used as the separator between username and password. This prevents ambiguity when splitting the decoded string.
 
 ## Constant-Time Verification
 

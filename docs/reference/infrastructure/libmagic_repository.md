@@ -49,11 +49,11 @@ classDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Created: Cookie::open()
-    Created --> Configured: set_flags(MIME_TYPE | MIME_ENCODING)
-    Configured --> Loaded: load(default database)
+    [*] --> Created: Open cookie
+    Created --> Configured: Set flags for MIME type and encoding
+    Configured --> Loaded: Load default database
     Loaded --> Ready: Ready for analysis
-    Ready --> Analyzing: analyze_buffer/file
+    Ready --> Analyzing: Analyze buffer or file
     Analyzing --> Ready: Return result
     Ready --> [*]: Drop
     
@@ -219,55 +219,29 @@ flowchart LR
     style NoEnc fill:#FFEB3B
 ```
 
-## Usage Example
+## Usage Scenarios
 
-```rust
-// Initialization
-let repository = Arc::new(LibmagicRepository::new()?);
+### Initialization
 
-// Analyze buffer (in-memory data)
-let data = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]; // PNG header
-let result = repository.analyze_buffer(&data, "image.png")?;
-assert_eq!(result.mime_type().as_str(), "image/png");
+The LibmagicRepository is initialized and wrapped in an Arc for thread-safe sharing across the application. The initialization may fail if the libmagic library cannot be opened or the database cannot be loaded.
 
-// Analyze file (by path)
-let path = Path::new("/sandbox/documents/report.pdf");
-let result = repository.analyze_file(path)?;
-assert_eq!(result.mime_type().type_part(), "application");
+### Analyze Buffer
 
-// Error handling
-match repository.analyze_file(path) {
-    Ok(result) => println!("Type: {}", result.description()),
-    Err(DomainError::FileNotFound(p)) => eprintln!("File not found: {}", p),
-    Err(DomainError::PermissionDenied(p)) => eprintln!("Access denied: {}", p),
-    Err(DomainError::MagicError(e)) => eprintln!("Analysis failed: {:?}", e),
-    Err(e) => eprintln!("Unexpected error: {:?}", e),
-}
-```
+When analyzing in-memory data such as a PNG file header (8 bytes starting with hex values 0x89, 0x50, 0x4E, 0x47), the analyze_buffer method is called with the byte slice and a filename hint. The method returns a MagicResult with the detected MIME type "image/png".
+
+### Analyze File by Path
+
+When analyzing a file by its filesystem path such as "/sandbox/documents/report.pdf", the analyze_file method is called with the path. The method returns a MagicResult with the MIME type detected from the file, such as "application/pdf".
+
+### Error Handling
+
+When analyzing a file, various errors can occur. FileNotFound indicates the file doesn't exist at the specified path. PermissionDenied indicates insufficient permissions to read the file. MagicError indicates the analysis failed (e.g., corrupted file or unsupported format). Other domain errors may occur for unexpected conditions.
 
 ## Thread Safety
 
-```rust
-// LibmagicRepository is Send + Sync
-// Can be shared across threads via Arc
-let repository = Arc::new(LibmagicRepository::new()?);
+LibmagicRepository implements Send and Sync traits, allowing it to be safely shared across threads when wrapped in an Arc. This is essential for use in async web servers where multiple requests may be processed concurrently.
 
-// Use in async context (Axum handler)
-async fn handler(
-    State(repo): State<Arc<LibmagicRepository>>,
-    data: Bytes,
-) -> Result<Json<MagicResponse>, StatusCode> {
-    // spawn_blocking because libmagic is CPU-bound
-    let result = tokio::task::spawn_blocking(move || {
-        repo.analyze_buffer(&data, "file.bin")
-    })
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
-    
-    Ok(Json(MagicResponse::from(result)))
-}
-```
+When used in async contexts such as Axum handlers, the repository is accessed through Arc from the application state. Because libmagic operations are CPU-bound and synchronous, they should be executed using spawn_blocking to avoid blocking the async runtime. The blocking task receives the Arc-wrapped repository, performs the analysis, and returns the result. Any errors from the spawned task or the analysis itself are mapped to appropriate HTTP status codes.
 
 ## Performance Considerations
 
@@ -281,48 +255,23 @@ async fn handler(
 
 ## Database Configuration
 
-```rust
-impl LibmagicRepository {
-    pub fn new() -> Result<Self, InfrastructureError> {
-        let cookie = Cookie::open(CookieFlags::MIME_TYPE | CookieFlags::MIME_ENCODING)?;
-        
-        // Load default database
-        cookie.load::<String>(&[])?;
-        
-        Ok(Self { cookie })
-    }
-    
-    pub fn with_database(database_path: &str) -> Result<Self, InfrastructureError> {
-        let cookie = Cookie::open(CookieFlags::MIME_TYPE | CookieFlags::MIME_ENCODING)?;
-        
-        // Load custom database
-        cookie.load(&[database_path])?;
-        
-        Ok(Self { cookie })
-    }
-}
-```
+### Default Database
 
-## Testing
+The new constructor opens a libmagic cookie with flags for MIME type and encoding detection, then loads the default system magic database. The default database is typically located at a system-specific path like "/usr/share/misc/magic.mgc". If either operation fails, an InfrastructureError is returned.
 
-```rust
-#[test]
-fn test_analyze_png_buffer() {
-    let repo = LibmagicRepository::new().unwrap();
-    let png_header = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-    
-    let result = repo.analyze_buffer(&png_header, "test.png").unwrap();
-    assert_eq!(result.mime_type().as_str(), "image/png");
-}
+### Custom Database
 
-#[test]
-fn test_analyze_file_not_found() {
-    let repo = LibmagicRepository::new().unwrap();
-    let result = repo.analyze_file(Path::new("/nonexistent/file.txt"));
-    
-    assert!(matches!(result, Err(DomainError::FileNotFound(_))));
-}
-```
+The with_database constructor accepts a custom database path parameter. It opens the cookie with the same flags, then loads the specified database file instead of the default. This allows using application-specific or updated magic databases. If the database file doesn't exist or cannot be loaded, an InfrastructureError is returned.
+
+## Testing Approach
+
+### PNG Buffer Analysis Test
+
+A test creates a LibmagicRepository instance and provides a byte vector containing the PNG file signature (8 bytes: 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A). When analyzing this buffer with filename "test.png", the repository correctly identifies the MIME type as "image/png".
+
+### File Not Found Test
+
+A test creates a repository instance and attempts to analyze a non-existent file path "/nonexistent/file.txt". The analyze_file method returns a DomainError with the FileNotFound variant, correctly handling the missing file scenario.
 
 ## Design Rationale
 

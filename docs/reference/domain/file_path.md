@@ -80,26 +80,21 @@ flowchart TD
 5. Valid UTF-8 encoding
 6. Immutable after construction
 
-## Usage Example
+## Usage Scenarios
 
-```rust
-// Valid relative path
-let path = RelativePath::new("documents/report.pdf")?;
-assert_eq!(path.as_path(), Path::new("documents/report.pdf"));
+### Valid Relative Path
 
-// Invalid: absolute path
-let result = RelativePath::new("/etc/passwd");
-assert!(matches!(result, Err(ValidationError::AbsolutePath)));
+When constructing RelativePath with a valid relative path like "documents/report.pdf", the value object is successfully created and the path can be retrieved as a Path reference.
 
-// Invalid: parent traversal
-let result = RelativePath::new("../etc/passwd");
-assert!(matches!(result, Err(ValidationError::ParentTraversal)));
+### Invalid Scenarios
 
-// Join operation
-let base = RelativePath::new("documents")?;
-let full = base.join("report.pdf")?;
-assert_eq!(full.as_path(), Path::new("documents/report.pdf"));
-```
+**Absolute Path:** Construction fails with AbsolutePath validation error when the path starts with a forward slash, such as "/etc/passwd", as only relative paths are allowed.
+
+**Parent Traversal:** Construction fails with ParentTraversal validation error when the path contains parent directory references like "../etc/passwd", preventing directory traversal attacks.
+
+### Join Operation
+
+When joining two relative paths, such as base path "documents" with component "report.pdf", the result is a new validated RelativePath representing "documents/report.pdf". The join operation re-validates the resulting path to ensure it remains safe.
 
 ## Path Normalization
 

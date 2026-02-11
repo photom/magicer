@@ -72,22 +72,17 @@ flowchart TD
 4. No null byte `\0` (C string terminator)
 5. Immutable after construction
 
-## Usage Example
+## Usage Scenarios
 
-```rust
-// Valid filename
-let filename = WindowsCompatibleFilename::new("document.pdf".to_string())?;
-assert_eq!(filename.as_str(), "document.pdf");
+### Valid Filename
 
-// Invalid: too long
-let long = "a".repeat(311);
-let result = WindowsCompatibleFilename::new(long);
-assert!(matches!(result, Err(ValidationError::TooLong(311, 310))));
+When constructing WindowsCompatibleFilename with a valid filename like "document.pdf", the value object is successfully created and the filename can be retrieved as a string slice.
 
-// Invalid: contains slash
-let result = WindowsCompatibleFilename::new("path/to/file.txt".to_string());
-assert!(matches!(result, Err(ValidationError::ContainsForwardSlash)));
-```
+### Invalid Scenarios
+
+**Filename Too Long:** Construction fails with TooLong validation error when the filename exceeds 310 characters. For example, a filename with 311 'a' characters would fail validation.
+
+**Contains Forward Slash:** Construction fails with ContainsForwardSlash validation error when the filename contains a forward slash character, such as "path/to/file.txt", as this would represent a path rather than a simple filename.
 
 ## Design Rationale
 

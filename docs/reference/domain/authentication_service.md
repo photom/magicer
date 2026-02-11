@@ -24,28 +24,11 @@ classDiagram
 
 ## Trait Definition
 
-```rust
-pub trait AuthenticationService: Send + Sync {
-    /// Verifies credentials using constant-time comparison.
-    ///
-    /// SECURITY REQUIREMENT: Implementation MUST use constant-time
-    /// comparison to prevent timing attacks.
-    ///
-    /// # Arguments
-    /// * `username` - Username to verify
-    /// * `password` - Password to verify
-    ///
-    /// # Returns
-    /// * `Ok(true)` - Credentials are valid
-    /// * `Ok(false)` - Credentials are invalid
-    /// * `Err(DomainError)` - Verification process failed
-    fn verify_credentials(
-        &self,
-        username: &str,
-        password: &str,
-    ) -> Result<bool, DomainError>;
-}
-```
+The AuthenticationService trait defines a single method verify_credentials that accepts username and password strings and returns a Result containing either a boolean (true for valid, false for invalid) or a DomainError if verification fails.
+
+**Security Requirement:** Implementations MUST use constant-time comparison to prevent timing attacks. The comparison must always take the same amount of time regardless of whether credentials match or not.
+
+The trait requires Send and Sync bounds to enable thread-safe usage in async contexts.
 
 ## Verification Flow
 
@@ -137,88 +120,30 @@ graph TD
 
 ## Trait Bounds
 
-```rust
-pub trait AuthenticationService: Send + Sync {
-    // Methods...
-}
-```
-
 | Bound | Purpose |
 |-------|---------|
-| `Send` | Can be transferred between threads |
-| `Sync` | Can be shared between threads (via `Arc`) |
+| Send | Can be transferred between threads |
+| Sync | Can be shared between threads via Arc |
 
-## Usage Example
+## Usage Patterns
 
-```rust
-// In presentation layer (middleware)
-pub async fn auth_middleware<S: AuthenticationService>(
-    State(auth_service): State<Arc<S>>,
-    req: Request,
-    next: Next,
-) -> Result<Response, AuthError> {
-    let (username, password) = extract_basic_auth(&req)?;
-    
-    let is_valid = auth_service
-        .verify_credentials(&username, &password)
-        .map_err(|e| AuthError::InternalError(e))?;
-    
-    if is_valid {
-        Ok(next.run(req).await)
-    } else {
-        Err(AuthError::InvalidCredentials)
-    }
-}
+### In Presentation Layer
 
-// In infrastructure layer (implementation)
-pub struct BasicAuthService {
-    stored_username: String,
-    stored_password_hash: String,
-}
+Middleware extracts username and password from the HTTP request, then calls the authentication service's verify_credentials method. If the result is true, the request proceeds to the next handler. If false or an error occurs, an authentication error is returned to the client.
 
-impl AuthenticationService for BasicAuthService {
-    fn verify_credentials(&self, username: &str, password: &str) -> Result<bool, DomainError> {
-        use subtle::ConstantTimeEq;
-        
-        // Validate inputs
-        if username.is_empty() || password.is_empty() {
-            return Err(DomainError::ValidationError(
-                ValidationError::EmptyCredentials
-            ));
-        }
-        
-        // Constant-time comparison
-        let username_match = self.stored_username.as_bytes().ct_eq(username.as_bytes());
-        let password_match = verify_password_hash(password, &self.stored_password_hash)?;
-        
-        // Combine results (both must be true)
-        Ok(bool::from(username_match & password_match))
-    }
-}
-```
+### In Infrastructure Layer
 
-## Timing Attack Example (What NOT to Do)
+Concrete implementations like BasicAuthService store the expected username and password (or password hash). The verify_credentials method validates that inputs are non-empty, then performs constant-time comparison of both username and password using specialized cryptographic comparison functions. Both comparisons are always executed, and the results are combined with a logical AND operation to produce the final boolean result.
 
-```rust
-// ❌ VULNERABLE: Early return leaks timing information
-fn verify_credentials_vulnerable(&self, username: &str, password: &str) -> bool {
-    if self.stored_username != username {
-        return false; // Early return reveals timing
-    }
-    if self.stored_password != password {
-        return false; // Early return reveals timing
-    }
-    true
-}
+## Timing Attack Prevention
 
-// ✅ SECURE: Constant-time, no early return
-fn verify_credentials_secure(&self, username: &str, password: &str) -> bool {
-    use subtle::ConstantTimeEq;
-    let user_match = self.stored_username.as_bytes().ct_eq(username.as_bytes());
-    let pass_match = self.stored_password.as_bytes().ct_eq(password.as_bytes());
-    bool::from(user_match & pass_match) // Always evaluates both
-}
-```
+### Vulnerable Approach
+
+A vulnerable implementation checks the username first and returns immediately if it doesn't match, then checks the password and returns immediately if it doesn't match. This early return pattern leaks timing information because failed username checks complete faster than failed password checks, allowing attackers to determine which credential is incorrect based on response time.
+
+### Secure Approach
+
+A secure implementation always performs both username and password comparisons using constant-time comparison functions, regardless of whether the username matches. The results are combined using a logical AND operation. This ensures the function always takes approximately the same amount of time, preventing timing-based information leakage.
 
 ## Dependency Injection
 
@@ -241,34 +166,7 @@ sequenceDiagram
 
 ## Test Doubles
 
-```rust
-// Mock for testing
-#[cfg(test)]
-pub struct MockAuthService {
-    valid_username: String,
-    valid_password: String,
-}
-
-impl AuthenticationService for MockAuthService {
-    fn verify_credentials(&self, username: &str, password: &str) -> Result<bool, DomainError> {
-        use subtle::ConstantTimeEq;
-        let user_match = self.valid_username.as_bytes().ct_eq(username.as_bytes());
-        let pass_match = self.valid_password.as_bytes().ct_eq(password.as_bytes());
-        Ok(bool::from(user_match & pass_match))
-    }
-}
-
-#[test]
-fn test_valid_credentials() {
-    let service = MockAuthService {
-        valid_username: "admin".to_string(),
-        valid_password: "secret".to_string(),
-    };
-    
-    assert!(service.verify_credentials("admin", "secret").unwrap());
-    assert!(!service.verify_credentials("admin", "wrong").unwrap());
-}
-```
+For testing purposes, a mock authentication service can be created that stores valid username and password values. The mock implements the AuthenticationService trait with the same constant-time comparison logic as production implementations. Test cases verify that the service returns true for matching credentials and false for non-matching credentials, ensuring the authentication logic works correctly in isolation.
 
 ## Design Rationale
 

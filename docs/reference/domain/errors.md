@@ -203,78 +203,29 @@ graph LR
     style ConfigError fill:#FFB6C1
 ```
 
-## Usage Example
+## Usage Scenarios
 
-```rust
-// Value object validation
-let filename = WindowsCompatibleFilename::new("a".repeat(311))
-    .map_err(|e| DomainError::ValidationError(e))?;
+### Value Object Validation
 
-// Repository operation
-let result = repository.analyze_buffer(data, &filename)
-    .map_err(|e| match e {
-        DomainError::MagicError(magic_err) => {
-            log::error!("Magic analysis failed: {:?}", magic_err);
-            e
-        },
-        DomainError::ValidationError(val_err) => {
-            log::warn!("Invalid input: {:?}", val_err);
-            e
-        },
-        _ => e,
-    })?;
+When constructing a value object like WindowsCompatibleFilename with invalid input (such as a 311-character string), a ValidationError is returned. This error can be wrapped in a DomainError::ValidationError variant for consistent error handling.
 
-// Error handling in application layer
-match use_case.execute(request) {
-    Ok(response) => Ok(response),
-    Err(DomainError::ValidationError(e)) => {
-        Err(ApplicationError::BadRequest(format!("Invalid input: {}", e)))
-    },
-    Err(DomainError::FileNotFound(path)) => {
-        Err(ApplicationError::NotFound(format!("File not found: {}", path)))
-    },
-    Err(DomainError::PermissionDenied(path)) => {
-        Err(ApplicationError::Forbidden(format!("Access denied: {}", path)))
-    },
-    Err(e) => {
-        Err(ApplicationError::InternalError(format!("Unexpected error: {:?}", e)))
-    },
-}
-```
+### Repository Operations
+
+When calling repository methods like analyze_buffer, errors can be matched and logged appropriately. MagicError variants are logged as errors while ValidationError variants are logged as warnings, reflecting their different severity levels.
+
+### Application Layer Error Handling
+
+In the application layer, use cases receive DomainError results and map them to ApplicationError variants. ValidationError maps to BadRequest, FileNotFound maps to NotFound, PermissionDenied maps to Forbidden, and unexpected errors map to InternalError. This translation provides HTTP-friendly semantic errors for the presentation layer.
 
 ## Trait Implementations
 
-```rust
-impl std::fmt::Display for DomainError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DomainError::ValidationError(e) => write!(f, "Validation error: {}", e),
-            DomainError::MagicError(e) => write!(f, "Magic analysis error: {}", e),
-            DomainError::FileNotFound(path) => write!(f, "File not found: {}", path),
-            DomainError::PermissionDenied(path) => write!(f, "Permission denied: {}", path),
-            DomainError::ConfigurationError(msg) => write!(f, "Configuration error: {}", msg),
-        }
-    }
-}
+DomainError implements the Display trait to provide human-readable error messages. Each variant formats its message appropriately: ValidationError and MagicError delegate to their inner error's display, while FileNotFound and PermissionDenied include the path, and ConfigurationError includes the message.
 
-impl std::error::Error for DomainError {}
-```
+DomainError also implements the standard Error trait, making it compatible with Rust's error handling ecosystem.
 
 ## Error Conversion
 
-```rust
-impl From<ValidationError> for DomainError {
-    fn from(err: ValidationError) -> Self {
-        DomainError::ValidationError(err)
-    }
-}
-
-impl From<MagicError> for DomainError {
-    fn from(err: MagicError) -> Self {
-        DomainError::MagicError(err)
-    }
-}
-```
+ValidationError and MagicError can be automatically converted to DomainError through From trait implementations. This enables the use of the question mark operator for automatic error propagation and wrapping, simplifying error handling code throughout the domain layer.
 
 ## Design Rationale
 

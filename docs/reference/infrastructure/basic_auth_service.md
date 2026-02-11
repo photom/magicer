@@ -96,33 +96,11 @@ sequenceDiagram
 
 ## Constant-Time Comparison
 
-```rust
-use subtle::ConstantTimeEq;
+The verify_credentials method first validates that both username and password inputs are non-empty. If either is empty, it returns a ValidationError.
 
-fn verify_credentials(&self, username: &str, password: &str) -> Result<bool, DomainError> {
-    // Validate inputs
-    if username.is_empty() || password.is_empty() {
-        return Err(DomainError::ValidationError(
-            ValidationError::EmptyCredentials
-        ));
-    }
-    
-    // Constant-time comparison
-    let user_match = self.stored_credentials
-        .username()
-        .as_bytes()
-        .ct_eq(username.as_bytes());
-    
-    let pass_match = self.stored_credentials
-        .password()
-        .as_bytes()
-        .ct_eq(password.as_bytes());
-    
-    // Combine results (both must be true)
-    // CRITICAL: No early return, always same execution time
-    Ok(bool::from(user_match & pass_match))
-}
-```
+For the actual comparison, the method converts both the stored and provided usernames to byte arrays and performs a constant-time equality check. It then performs the same constant-time comparison for passwords.
+
+**Critical Security Feature:** Both comparisons are always executed regardless of whether the username matches. The results are combined using a logical AND operation. This ensures the method always takes the same amount of time to execute, preventing attackers from determining which credential is incorrect based on response timing.
 
 ## Timing Attack Prevention
 
@@ -154,48 +132,27 @@ graph TD
 | `AUTH_USERNAME` | Yes | Basic auth username | `admin` |
 | `AUTH_PASSWORD` | Yes | Basic auth password | `securepassword123` |
 
-```rust
-impl BasicAuthService {
-    pub fn from_env() -> Result<Self, InfrastructureError> {
-        let username = std::env::var("AUTH_USERNAME")
-            .map_err(|_| InfrastructureError::MissingConfig("AUTH_USERNAME"))?;
-        
-        let password = std::env::var("AUTH_PASSWORD")
-            .map_err(|_| InfrastructureError::MissingConfig("AUTH_PASSWORD"))?;
-        
-        Self::new(username, password)
-    }
-}
-```
+## Configuration Loading
 
-## Usage Example
+The from_env method reads the AUTH_USERNAME and AUTH_PASSWORD environment variables. If either variable is missing, it returns an InfrastructureError indicating which configuration is absent. If both are present, it calls the new method with the loaded values.
 
-```rust
-// From explicit credentials
-let service = BasicAuthService::new(
-    "admin".to_string(),
-    "securepassword123".to_string()
-)?;
+## Usage Scenarios
 
-// From environment variables
-std::env::set_var("AUTH_USERNAME", "admin");
-std::env::set_var("AUTH_PASSWORD", "securepassword123");
-let service = BasicAuthService::from_env()?;
+### Construction from Explicit Credentials
 
-// Verify credentials
-let is_valid = service.verify_credentials("admin", "securepassword123")?;
-assert!(is_valid);
+When constructing BasicAuthService with explicit username "admin" and password "securepassword123", the service is successfully created after validating that both credentials meet the requirements.
 
-let is_valid = service.verify_credentials("admin", "wrongpassword")?;
-assert!(!is_valid);
+### Construction from Environment Variables
 
-// Error handling
-match service.verify_credentials("", "password") {
-    Ok(false) => println!("Invalid credentials"),
-    Err(DomainError::ValidationError(_)) => println!("Empty username/password"),
-    _ => {}
-}
-```
+When constructing from environment variables, the service reads AUTH_USERNAME and AUTH_PASSWORD from the process environment. If both are set to valid values, the service initializes successfully.
+
+### Verification Behavior
+
+When verifying credentials with matching username and password, the method returns true. When verifying with correct username but incorrect password, the method returns false. Both cases take approximately the same amount of time due to constant-time comparison.
+
+### Error Handling
+
+When attempting to verify credentials with an empty username or password, the method returns a ValidationError indicating empty credentials, rather than returning false.
 
 ## Security Features
 
@@ -252,111 +209,29 @@ flowchart TD
 
 ## Integration with Middleware
 
-```rust
-// In presentation layer middleware
-pub async fn auth_middleware<B>(
-    State(auth_service): State<Arc<BasicAuthService>>,
-    mut req: Request<B>,
-    next: Next<B>,
-) -> Result<Response, StatusCode> {
-    // Extract Authorization header
-    let auth_header = req.headers()
-        .get("authorization")
-        .and_then(|h| h.to_str().ok())
-        .ok_or(StatusCode::UNAUTHORIZED)?;
-    
-    // Parse Basic auth
-    if !auth_header.starts_with("Basic ") {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-    
-    let encoded = &auth_header[6..];
-    let decoded = base64::decode(encoded)
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
-    let credentials = String::from_utf8(decoded)
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
-    
-    let parts: Vec<&str> = credentials.splitn(2, ':').collect();
-    if parts.len() != 2 {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-    
-    let (username, password) = (parts[0], parts[1]);
-    
-    // Verify credentials (constant-time)
-    let is_valid = auth_service
-        .verify_credentials(username, password)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    
-    if is_valid {
-        Ok(next.run(req).await)
-    } else {
-        Err(StatusCode::UNAUTHORIZED)
-    }
-}
-```
+The authentication middleware receives the BasicAuthService through dependency injection. It extracts the Authorization header from the incoming request. If the header is missing or doesn't start with "Basic ", it returns an unauthorized status.
 
-## Testing
+The middleware then extracts the Base64-encoded credentials, decodes them to a UTF-8 string, and splits on the first colon to separate username and password. If any of these steps fail or if the split doesn't produce exactly two parts, it returns an unauthorized status.
 
-```rust
-#[test]
-fn test_valid_credentials() {
-    let service = BasicAuthService::new(
-        "admin".to_string(),
-        "password123".to_string()
-    ).unwrap();
-    
-    assert!(service.verify_credentials("admin", "password123").unwrap());
-}
+With the extracted credentials, the middleware calls the authentication service's verify_credentials method. If verification succeeds (returns true), the request proceeds to the next handler. If verification fails (returns false), an unauthorized status is returned. If an error occurs during verification, an internal server error status is returned.
 
-#[test]
-fn test_invalid_password() {
-    let service = BasicAuthService::new(
-        "admin".to_string(),
-        "password123".to_string()
-    ).unwrap();
-    
-    assert!(!service.verify_credentials("admin", "wrongpass").unwrap());
-}
+## Testing Approach
 
-#[test]
-fn test_empty_credentials() {
-    let service = BasicAuthService::new(
-        "admin".to_string(),
-        "password123".to_string()
-    ).unwrap();
-    
-    let result = service.verify_credentials("", "password123");
-    assert!(matches!(result, Err(DomainError::ValidationError(_))));
-}
+### Valid Credentials Test
 
-#[test]
-fn test_timing_attack_resistance() {
-    use std::time::Instant;
-    
-    let service = BasicAuthService::new(
-        "admin".to_string(),
-        "password123".to_string()
-    ).unwrap();
-    
-    // Time wrong username
-    let start = Instant::now();
-    let _ = service.verify_credentials("wrong", "password123");
-    let time1 = start.elapsed();
-    
-    // Time correct username, wrong password
-    let start = Instant::now();
-    let _ = service.verify_credentials("admin", "wrongpass");
-    let time2 = start.elapsed();
-    
-    // Times should be similar (within 10% tolerance)
-    let diff = if time1 > time2 { time1 - time2 } else { time2 - time1 };
-    let max_time = time1.max(time2);
-    let diff_percent = (diff.as_nanos() * 100) / max_time.as_nanos();
-    
-    assert!(diff_percent < 10, "Timing difference too large: {}%", diff_percent);
-}
-```
+A test constructs BasicAuthService with username "admin" and password "password123". When verifying with the exact same credentials, the method returns true, confirming successful authentication.
+
+### Invalid Password Test
+
+A test constructs the service with specific credentials, then verifies with the correct username but incorrect password "wrongpass". The method returns false, correctly rejecting invalid credentials.
+
+### Empty Credentials Test
+
+A test attempts to verify credentials where the username is an empty string. The method returns a ValidationError rather than false, distinguishing between invalid input and failed authentication.
+
+### Timing Attack Resistance Test
+
+A test measures the execution time for two scenarios: wrong username with correct password, and correct username with wrong password. Both operations complete in approximately the same amount of time (within 10% tolerance), demonstrating resistance to timing attacks. The similar timing prevents attackers from determining which credential component is incorrect.
 
 ## Design Rationale
 

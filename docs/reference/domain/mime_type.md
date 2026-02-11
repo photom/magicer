@@ -119,31 +119,23 @@ flowchart TD
 5. Contains only valid MIME characters (alphanumeric, `-`, `+`, `.`, `_`)
 6. Immutable after construction
 
-## Usage Example
+## Usage Scenarios
 
-```rust
-// Valid MIME types
-let mime = MimeType::new("text/plain")?;
-assert_eq!(mime.type_part(), "text");
-assert_eq!(mime.subtype(), "plain");
-assert!(mime.is_text());
+### Valid MIME Types
 
-let mime = MimeType::new("application/json")?;
-assert!(mime.is_application());
-assert!(!mime.is_text());
+When constructing MimeType with a valid MIME type string like "text/plain", the value object is successfully created. The type part can be retrieved as "text", the subtype as "plain", and the is_text method returns true.
 
-// Construct from parts
-let mime = MimeType::from_parts("image".to_string(), "png".to_string())?;
-assert_eq!(mime.as_str(), "image/png");
+When constructing with "application/json", the is_application method returns true while is_text returns false, correctly categorizing the MIME type.
 
-// Invalid: missing slash
-let result = MimeType::new("textplain");
-assert!(matches!(result, Err(ValidationError::MissingSlash)));
+### Construct from Parts
 
-// Invalid: empty type
-let result = MimeType::new("/plain");
-assert!(matches!(result, Err(ValidationError::EmptyType)));
-```
+MimeType can also be constructed from separate type and subtype components. For example, constructing from type "image" and subtype "png" results in a MimeType that represents "image/png".
+
+### Invalid Scenarios
+
+**Missing Slash:** Construction fails with MissingSlash validation error when the MIME type string does not contain a forward slash separator, such as "textplain".
+
+**Empty Type:** Construction fails with EmptyType validation error when the type part before the slash is empty, such as "/plain".
 
 ## Type Categorization
 

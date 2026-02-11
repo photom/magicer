@@ -102,25 +102,19 @@ flowchart TD
 4. `analyzed_at` is set at construction (immutable)
 5. Entities are equal if and only if their `id` is equal
 
-## Usage Example
+## Usage Scenarios
 
-```rust
-// Create basic result
-let mime = MimeType::new("text/plain")?;
-let result = MagicResult::new(mime, "ASCII text".to_string());
-assert_eq!(result.description(), "ASCII text");
+### Create Basic Result
 
-// Create result with encoding
-let mime = MimeType::new("text/html")?;
-let result = MagicResult::new(mime, "HTML document".to_string())
-    .with_encoding(Some("utf-8".to_string()));
-assert_eq!(result.encoding(), Some("utf-8"));
+When constructing a MagicResult with a MIME type like "text/plain" and description "ASCII text", the entity is successfully created with an automatically generated unique identifier and timestamp. The description can be retrieved from the entity.
 
-// Entity identity
-let result1 = MagicResult::new(mime.clone(), "Text file".to_string());
-let result2 = MagicResult::new(mime.clone(), "Text file".to_string());
-assert_ne!(result1.id(), result2.id()); // Different entities even with same data
-```
+### Create Result with Encoding
+
+When constructing a MagicResult for a text file like HTML, the encoding can be optionally set using the with_encoding builder method. For example, creating a result for "HTML document" and then setting encoding to "utf-8" produces an entity with both description and encoding information.
+
+### Entity Identity
+
+When creating two MagicResult entities with identical MIME type and description (such as "Text file"), each entity receives a different unique identifier. This demonstrates that entities are distinguished by identity rather than by their attribute values. Two results with the same data are considered different entities because they have different IDs.
 
 ## Entity Lifecycle
 
@@ -145,16 +139,7 @@ stateDiagram-v2
 
 ## Equality Semantics
 
-```rust
-impl PartialEq for MagicResult {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-        // Only compare identity, not values
-    }
-}
-
-impl Eq for MagicResult {}
-```
+MagicResult entities implement equality comparison based solely on their unique identifier. Two MagicResult entities are considered equal if and only if they have the same ID value. The comparison ignores all other fields including MIME type, description, encoding, and timestamp. This identity-based equality is a fundamental characteristic of the entity pattern, distinguishing entities from value objects which compare all fields.
 
 ## Sample Data
 
