@@ -114,226 +114,36 @@ flowchart LR
 
 ## Atomic File Creation
 
-```rust
-use std::fs::OpenOptions;
-use std::os::unix::fs::OpenOptionsExt;
+The handler ensures that temporary files are created securely and without race conditions. It uses specific system flags to guarantee that:
+1. **Exclusivity**: The file is created only if it does not already exist. If a file with the same name is found, the creation fails atomically, allowing the handler to retry with a new name.
+2. **Permissions**: Files are created with restrictive permissions (read/write for the owner only, typically represented as mode 0600).
+3. **Atomic check-and-create**: The existence check and the file creation happen as a single uninterruptible operation at the kernel level.
 
-fn atomic_create(path: &Path) -> Result<File, std::io::Error> {
-    OpenOptions::new()
-        .write(true)
-        .create_new(true) // Fails if file exists (atomic check)
-        .mode(0o600)      // Owner read/write only
-        .open(path)
-}
-```
+## Usage Scenario
 
-| Flag | Purpose | Behavior |
-|------|---------|----------|
-| `create_new(true)` | Atomic creation | Fails if file already exists (prevents race conditions) |
-| `mode(0o600)` | Secure permissions | Owner read/write only (no group/other access) |
-| `write(true)` | Write access | Required to write data |
+### Creating a Temporary File
 
-## Collision Handling
+The primary way to use the handler is by calling the creation method with the binary data and a target directory. The handler generates a unique name, creates the file atomically, writes the data, and returns an instance that manages the file's lifecycle.
 
-```mermaid
-sequenceDiagram
-    participant Handler
-    participant FS as Filesystem
-    participant RNG as Random Generator
-    
-    loop Until success or max retries
-        Handler->>RNG: Generate filename
-        RNG-->>Handler: unique_filename
-        Handler->>FS: atomic_create(O_CREAT | O_EXCL)
-        alt File exists (rare collision)
-            FS-->>Handler: Err: File exists
-            Handler->>Handler: Increment retry counter
-        else Success
-            FS-->>Handler: Ok: File created
-            Handler->>FS: Write data
-            Handler->>FS: Sync to disk
-        end
-    end
-```
+### Accessing the Path
 
-## Cleanup Behavior
+Once created, the absolute path to the temporary file can be retrieved for use with other system components, such as the libmagic repository.
 
-```mermaid
-flowchart TD
-    Drop[Drop called] --> CheckFlag{cleaned_up?}
-    CheckFlag -->|Yes| SkipCleanup[Skip: Already cleaned]
-    CheckFlag -->|No| DeleteFile[Delete file]
-    DeleteFile --> FileExists{File exists?}
-    FileExists -->|Yes| Remove[Remove file]
-    FileExists -->|No| LogWarn[Log warning: File already deleted]
-    Remove --> SetFlag[Set cleaned_up = true]
-    LogWarn --> SetFlag
-    SetFlag --> Done[Done]
-    
-    ExplicitCleanup[cleanup called explicitly] --> CheckFlag
-    
-    style Done fill:#90EE90
-    style LogWarn fill:#FFEB3B
-```
+### Automatic and Explicit Cleanup
 
-## Usage Example
+The handler implements the Resource Acquisition Is Initialization (RAII) pattern. When the handler instance goes out of scope, the temporary file is automatically deleted from the filesystem. Cleanup can also be triggered explicitly if the file is no longer needed before the instance is dropped.
 
-```rust
-use std::path::Path;
+## Testing Strategy
 
-// Create temporary file with data
-let data = b"Test file content";
-let base_dir = Path::new("/tmp");
-let temp_file = TempFileHandler::create_temp_file(data, base_dir)?;
-
-// Use the file
-let path = temp_file.path();
-println!("Temp file created at: {}", path.display());
-
-// Analyze with libmagic
-let result = repository.analyze_file(path)?;
-
-// Explicit cleanup (optional, drop does this automatically)
-temp_file.cleanup()?;
-
-// Drop cleanup example
-{
-    let temp = TempFileHandler::create_temp_file(data, base_dir)?;
-    // Use temp file...
-} // temp is dropped here, file is automatically deleted
-```
-
-## Error Handling
-
-| Error Condition | Error Type | Recovery |
-|-----------------|------------|----------|
-| Base directory doesn't exist | `InfrastructureError::InvalidPath` | Create directory first |
-| Permission denied | `InfrastructureError::PermissionDenied` | Check directory permissions |
-| Disk full | `InfrastructureError::IoError` | Free disk space |
-| Max retries exceeded | `InfrastructureError::MaxRetriesExceeded` | Rare, investigate |
-| Cleanup failure | `InfrastructureError::IoError` | Log warning, continue |
-
-## Security Features
-
-```mermaid
-graph TD
-    Security[Security Features]
-    
-    Security --> Atomic[Atomic Creation]
-    Atomic --> NoRace[No race conditions<br/>O_CREAT  O_EXCL]
-    
-    Security --> Perms[Secure Permissions]
-    Perms --> OwnerOnly[0600: Owner RW only<br/>No group/other access]
-    
-    Security --> Unique[Unique Filenames]
-    Unique --> Unpredictable[UUID + timestamp + random<br/>Prevents prediction]
-    
-    Security --> AutoCleanup[Automatic Cleanup]
-    AutoCleanup --> NoLeak[RAII pattern<br/>No file leakage]
-    
-    style Atomic fill:#90EE90
-    style Perms fill:#90EE90
-    style Unique fill:#90EE90
-    style AutoCleanup fill:#90EE90
-```
-
-## Performance Considerations
-
-| Aspect | Impact | Mitigation |
-|--------|--------|------------|
-| **Collision Probability** | Very low (UUID + timestamp + random) | Retry mechanism handles rare cases |
-| **File I/O** | Disk write for every request | Use tmpfs (`/dev/shm`) for performance |
-| **Cleanup Overhead** | One `unlink()` syscall | Negligible, O(1) operation |
-| **Max Retries** | 10 attempts maximum | Sufficient for even high collision rates |
-
-## Testing
-
-```rust
-#[test]
-fn test_create_temp_file() {
-    let temp_dir = tempdir().unwrap();
-    let data = b"test data";
-    
-    let temp_file = TempFileHandler::create_temp_file(data, temp_dir.path()).unwrap();
-    
-    // File exists
-    assert!(temp_file.path().exists());
-    
-    // Correct permissions (Unix only)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let metadata = std::fs::metadata(temp_file.path()).unwrap();
-        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
-    }
-    
-    // Correct content
-    let content = std::fs::read(temp_file.path()).unwrap();
-    assert_eq!(content, data);
-}
-
-#[test]
-fn test_automatic_cleanup() {
-    let temp_dir = tempdir().unwrap();
-    let data = b"test data";
-    let path = {
-        let temp_file = TempFileHandler::create_temp_file(data, temp_dir.path()).unwrap();
-        temp_file.path().to_path_buf()
-    }; // temp_file dropped here
-    
-    // File should be deleted
-    assert!(!path.exists());
-}
-
-#[test]
-fn test_explicit_cleanup() {
-    let temp_dir = tempdir().unwrap();
-    let data = b"test data";
-    
-    let mut temp_file = TempFileHandler::create_temp_file(data, temp_dir.path()).unwrap();
-    let path = temp_file.path().to_path_buf();
-    
-    // Explicit cleanup
-    temp_file.cleanup().unwrap();
-    
-    // File should be deleted
-    assert!(!path.exists());
-}
-
-#[test]
-fn test_unique_filenames() {
-    let temp_dir = tempdir().unwrap();
-    let data = b"test";
-    
-    let temp1 = TempFileHandler::create_temp_file(data, temp_dir.path()).unwrap();
-    let temp2 = TempFileHandler::create_temp_file(data, temp_dir.path()).unwrap();
-    
-    // Different filenames
-    assert_ne!(temp1.path(), temp2.path());
-}
-```
+The testing suite for TempFileHandler covers several critical behaviors:
+- **Existence and Content**: Verifies that the file is actually created and contains the exact bytes provided.
+- **Security Permissions**: Confirms that the file is created with restricted access (owner-only).
+- **RAII Lifecycle**: Ensures that files are correctly removed when the handler is dropped, even if a panic occurs.
+- **Uniqueness**: Validates that multiple concurrent requests result in distinct filenames without collisions.
 
 ## Integration with Use Cases
 
-```rust
-// In AnalyzeContentUseCase
-impl AnalyzeContentUseCase {
-    pub fn execute(&self, request: AnalyzeContentRequest) -> Result<MagicResponse, ApplicationError> {
-        // Create temporary file
-        let temp_file = TempFileHandler::create_temp_file(
-            request.content(),
-            &self.temp_dir
-        )?;
-        
-        // Analyze file
-        let result = self.repository.analyze_file(temp_file.path())?;
-        
-        // temp_file dropped here, automatically cleaned up
-        
-        Ok(MagicResponse::from(result))
-    }
-}
-```
+In application use cases, the TempFileHandler is used to facilitate analysis of uploaded content that requires a filesystem path. The use case creates the temporary file, passes its path to the repository, and then allows the handler to naturally clean up the file when the operation is complete.
 
 ## Configuration
 

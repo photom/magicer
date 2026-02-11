@@ -145,143 +145,35 @@ graph TD
 | **Symlink escape** | `link` → `/etc/passwd` | ❌ Rejected | Canonicalized path outside sandbox |
 | **Valid relative** | `docs/file.txt` | ✅ Allowed | Within sandbox, no traversal |
 
-## Usage Example
+## Usage Scenario
 
-```rust
-// Initialize sandbox
-let sandbox = PathSandbox::new("/var/data/uploads")?;
+### Initialization
 
-// Resolve valid relative path
-let relative = RelativePath::new("documents/report.pdf")?;
-let absolute = sandbox.resolve_path(&relative)?;
-assert_eq!(absolute, Path::new("/var/data/uploads/documents/report.pdf"));
+The PathSandbox is initialized with a path to the root directory that defines the security boundary. During initialization, it verifies that the directory exists and is accessible, then canonicalizes the path to ensure all subsequent boundary checks use absolute, normalized paths.
 
-// Check if path is within sandbox
-assert!(sandbox.is_within_sandbox(Path::new("/var/data/uploads/file.txt")));
-assert!(!sandbox.is_within_sandbox(Path::new("/etc/passwd")));
+### Path Resolution
 
-// Canonicalize and check
-let path = Path::new("/var/data/uploads/../uploads/file.txt");
-let canonical = sandbox.canonicalize_and_check(path)?;
-assert_eq!(canonical, Path::new("/var/data/uploads/file.txt"));
+When resolving a path, the sandbox takes a RelativePath value object and joins it with the sandbox root. It then verifies the file exists, canonicalizes the full path to resolve any internal symlinks or relative components, and finally checks if the resulting absolute path still starts with the sandbox root.
 
-// Path traversal attempt (rejected by RelativePath)
-let result = RelativePath::new("../../../etc/passwd");
-assert!(matches!(result, Err(ValidationError::ParentTraversal)));
+### Boundary Verification
 
-// Symlink escape (rejected by sandbox)
-// Given: /var/data/uploads/evil_link → /etc/passwd
-let relative = RelativePath::new("evil_link")?;
-let result = sandbox.resolve_path(&relative);
-assert!(matches!(result, Err(DomainError::Forbidden(_))));
-```
-
-## Security Validation Steps
-
-```mermaid
-flowchart TD
-    Input[User Input: relative_path] --> Step1[1. RelativePath validation]
-    Step1 --> Check1{No '..'?<br/>No leading '/'?}
-    Check1 -->|Fail| Reject1[Reject: Invalid path]
-    Check1 -->|Pass| Step2[2. Join with sandbox_root]
-    
-    Step2 --> Step3[3. Check file exists]
-    Step3 --> Check2{File exists?}
-    Check2 -->|No| Reject2[Reject: Not found]
-    Check2 -->|Yes| Step4[4. Canonicalize path]
-    
-    Step4 --> Step5[5. Check prefix]
-    Step5 --> Check3{Starts with<br/>sandbox_root?}
-    Check3 -->|No| Reject3[Reject: Outside sandbox]
-    Check3 -->|Yes| Step6[6. Check symlink target]
-    
-    Step6 --> Check4{Symlink target<br/>within sandbox?}
-    Check4 -->|No| Reject4[Reject: Symlink escape]
-    Check4 -->|Yes| Accept[Accept: Safe path]
-    
-    style Accept fill:#90EE90
-    style Reject1 fill:#FFB6C1
-    style Reject2 fill:#FFB6C1
-    style Reject3 fill:#FFB6C1
-    style Reject4 fill:#FFB6C1
-```
+The sandbox provides a dedicated check to determine if any given path resides within its defined boundaries. This is used both during path resolution and as a general-purpose security check throughout the infrastructure layer.
 
 ## Implementation Details
 
-```rust
-impl PathSandbox {
-    pub fn resolve_path(&self, relative: &RelativePath) -> Result<PathBuf, DomainError> {
-        // 1. Join sandbox root with relative path
-        let full_path = self.sandbox_root.join(relative.as_path());
-        
-        // 2. Check if file exists
-        if !full_path.exists() {
-            return Err(DomainError::FileNotFound(full_path.display().to_string()));
-        }
-        
-        // 3. Canonicalize (resolves symlinks, normalizes path)
-        let canonical = full_path.canonicalize()
-            .map_err(|e| DomainError::FileSystemError(e.to_string()))?;
-        
-        // 4. Verify canonical path is within sandbox
-        if !self.is_within_sandbox(&canonical) {
-            return Err(DomainError::Forbidden(
-                format!("Path traversal attempt: {}", relative.as_path().display())
-            ));
-        }
-        
-        Ok(canonical)
-    }
-    
-    pub fn is_within_sandbox(&self, path: &Path) -> bool {
-        path.starts_with(&self.sandbox_root)
-    }
-}
-```
+The implementation of PathSandbox relies on several key filesystem operations:
+1. **Joining**: Combines the sandbox root with the user-provided relative path.
+2. **Existence Check**: Confirms the file exists before attempting more complex resolution.
+3. **Canonicalization**: The core security step which resolves all symbolic links and dot-segments (`.` and `..`) to produce a definitive absolute path.
+4. **Prefix Check**: A string-based comparison ensuring the canonical path begins with the canonical sandbox root.
 
-## Testing
+## Testing Strategy
 
-```rust
-#[test]
-fn test_resolve_valid_path() {
-    let temp_dir = tempdir().unwrap();
-    let sandbox = PathSandbox::new(temp_dir.path()).unwrap();
-    
-    // Create test file
-    let file_path = temp_dir.path().join("test.txt");
-    std::fs::write(&file_path, b"test").unwrap();
-    
-    let relative = RelativePath::new("test.txt").unwrap();
-    let resolved = sandbox.resolve_path(&relative).unwrap();
-    
-    assert_eq!(resolved, file_path);
-}
-
-#[test]
-fn test_reject_symlink_escape() {
-    let temp_dir = tempdir().unwrap();
-    let sandbox = PathSandbox::new(temp_dir.path()).unwrap();
-    
-    // Create symlink to /etc/passwd
-    let link_path = temp_dir.path().join("evil_link");
-    std::os::unix::fs::symlink("/etc/passwd", &link_path).unwrap();
-    
-    let relative = RelativePath::new("evil_link").unwrap();
-    let result = sandbox.resolve_path(&relative);
-    
-    assert!(matches!(result, Err(DomainError::Forbidden(_))));
-}
-
-#[test]
-fn test_is_within_sandbox() {
-    let sandbox = PathSandbox::new("/var/data/uploads").unwrap();
-    
-    assert!(sandbox.is_within_sandbox(Path::new("/var/data/uploads/file.txt")));
-    assert!(sandbox.is_within_sandbox(Path::new("/var/data/uploads/sub/file.txt")));
-    assert!(!sandbox.is_within_sandbox(Path::new("/etc/passwd")));
-    assert!(!sandbox.is_within_sandbox(Path::new("/var/data/other/file.txt")));
-}
-```
+Testing the sandbox involves multiple scenarios to ensure no escape is possible:
+- **Valid Resolution**: Confirms that normal files within the sandbox are correctly resolved.
+- **Symlink Escapes**: Verifies that symlinks pointing to sensitive system files like `/etc/passwd` are detected and blocked.
+- **Boundary Checks**: Ensures that both immediate children and deeply nested files are correctly identified as being within the sandbox.
+- **Negative Cases**: Confirms that files in sister directories or parent directories are correctly rejected.
 
 ## Error Cases
 

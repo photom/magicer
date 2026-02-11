@@ -73,410 +73,44 @@ sequenceDiagram
     Middleware-->>Client: Response with X-Request-ID
 ```
 
-### Implementation
+## Request ID Middleware
 
-```rust
-pub fn request_id_layer() -> ServiceBuilder<Stack<RequestIdLayer, Identity>> {
-    ServiceBuilder::new()
-        .layer(RequestIdLayer)
-}
-
-pub struct RequestIdLayer;
-
-impl<S> Layer<S> for RequestIdLayer {
-    type Service = RequestIdMiddleware<S>;
-    
-    fn layer(&self, inner: S) -> Self::Service {
-        RequestIdMiddleware { inner }
-    }
-}
-
-pub struct RequestIdMiddleware<S> {
-    inner: S,
-}
-
-impl<S, B> Service<Request<B>> for RequestIdMiddleware<S>
-where
-    S: Service<Request<B>, Response = Response> + Clone + Send + 'static,
-    B: Send + 'static,
-{
-    type Response = S::Response;
-    type Error = S::Error;
-    type Future = /* ... */;
-    
-    fn call(&mut self, mut req: Request<B>) -> Self::Future {
-        // Extract or generate request ID
-        let request_id = req
-            .headers()
-            .get("x-request-id")
-            .and_then(|h| h.to_str().ok())
-            .and_then(|s| RequestId::parse(s).ok())
-            .unwrap_or_else(RequestId::new);
-        
-        // Inject into request extensions
-        req.extensions_mut().insert(request_id.clone());
-        
-        // Continue to next layer
-        let fut = self.inner.call(req);
-        
-        async move {
-            let mut res = fut.await?;
-            
-            // Add X-Request-ID header to response
-            res.headers_mut().insert(
-                "x-request-id",
-                request_id.to_string().parse().unwrap(),
-            );
-            
-            Ok(res)
-        }
-    }
-}
-```
-
----
+The Request ID middleware ensures that every request has a unique identifier for tracing and correlation. It follows a multi-step logic:
+1. **Extraction**: Checks if the incoming request already has an `X-Request-ID` header.
+2. **Generation**: If no valid ID is found, it generates a new random UUID v4.
+3. **Injection**: Stores the identifier in the request extensions so it can be accessed by use cases and handlers.
+4. **Response**: Adds the `X-Request-ID` header to the outgoing response, allowing clients to correlate logs.
 
 ## Authentication Middleware
 
-### Class Diagram
-
-```mermaid
-classDiagram
-    class AuthMiddleware {
-        +auth_layer(service: Arc~AuthenticationService~) Layer
-        +extract_basic_auth(req: &Request) Result~(String, String), AuthError~
-    }
-    
-    class AuthenticationService {
-        <<trait>>
-    }
-    
-    class AuthError {
-        <<enumeration>>
-        MissingHeader
-        InvalidFormat
-        InvalidCredentials
-        InternalError
-    }
-    
-    AuthMiddleware ..> AuthenticationService : uses
-    AuthMiddleware ..> AuthError : returns
-    
-    note for AuthMiddleware "HTTP Basic Auth\nConstant-time verification\nPublic endpoints bypass"
-```
-
-### Flow
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Middleware as AuthMiddleware
-    participant Service as AuthenticationService
-    participant Handler
-    
-    Client->>Middleware: HTTP Request
-    Middleware->>Middleware: Check if public endpoint
-    alt Public endpoint (e.g., /v1/ping)
-        Middleware->>Handler: Forward without auth check
-        Handler-->>Client: Response
-    else Protected endpoint
-        Middleware->>Middleware: Extract Authorization header
-        alt Header missing
-            Middleware-->>Client: 401 Unauthorized
-        else Header present
-            Middleware->>Middleware: Parse Basic auth
-            alt Invalid format
-                Middleware-->>Client: 401 Unauthorized
-            else Valid format
-                Middleware->>Service: verify_credentials
-                alt Valid credentials
-                    Service-->>Middleware: Ok(true)
-                    Middleware->>Handler: Forward request
-                    Handler-->>Client: Response
-                else Invalid credentials
-                    Service-->>Middleware: Ok(false)
-                    Middleware-->>Client: 401 Unauthorized
-                end
-            end
-        end
-    end
-```
-
-### Public Endpoints
-
-| Path | Method | Auth Required |
-|------|--------|---------------|
-| `/v1/ping` | GET | ❌ No |
-| `/v1/magic/content` | POST | ✅ Yes |
-| `/v1/magic/path` | POST | ✅ Yes |
-
-### Implementation
-
-```rust
-pub fn auth_layer(
-    auth_service: Arc<dyn AuthenticationService>,
-) -> ServiceBuilder<Stack<AuthLayer, Identity>> {
-    ServiceBuilder::new()
-        .layer(AuthLayer { auth_service })
-}
-
-pub struct AuthLayer {
-    auth_service: Arc<dyn AuthenticationService>,
-}
-
-impl<S> Layer<S> for AuthLayer {
-    type Service = AuthMiddleware<S>;
-    
-    fn layer(&self, inner: S) -> Self::Service {
-        AuthMiddleware {
-            inner,
-            auth_service: self.auth_service.clone(),
-        }
-    }
-}
-
-pub struct AuthMiddleware<S> {
-    inner: S,
-    auth_service: Arc<dyn AuthenticationService>,
-}
-
-impl<S, B> Service<Request<B>> for AuthMiddleware<S>
-where
-    S: Service<Request<B>, Response = Response> + Clone + Send + 'static,
-    B: Send + 'static,
-{
-    type Response = S::Response;
-    type Error = S::Error;
-    type Future = /* ... */;
-    
-    fn call(&mut self, req: Request<B>) -> Self::Future {
-        // Check if endpoint is public
-        if is_public_endpoint(req.uri().path()) {
-            return self.inner.call(req);
-        }
-        
-        // Extract Authorization header
-        let auth_header = match req.headers().get("authorization") {
-            Some(h) => h,
-            None => return ready(Err(AuthError::MissingHeader)),
-        };
-        
-        // Parse Basic auth
-        let (username, password) = match extract_basic_auth(auth_header) {
-            Ok(creds) => creds,
-            Err(e) => return ready(Err(e)),
-        };
-        
-        // Verify credentials
-        let auth_service = self.auth_service.clone();
-        let fut = self.inner.call(req);
-        
-        async move {
-            let is_valid = auth_service
-                .verify_credentials(&username, &password)
-                .map_err(|_| AuthError::InternalError)?;
-            
-            if is_valid {
-                Ok(fut.await?)
-            } else {
-                Err(AuthError::InvalidCredentials)
-            }
-        }
-    }
-}
-
-fn extract_basic_auth(header: &HeaderValue) -> Result<(String, String), AuthError> {
-    let auth_str = header.to_str().map_err(|_| AuthError::InvalidFormat)?;
-    
-    if !auth_str.starts_with("Basic ") {
-        return Err(AuthError::InvalidFormat);
-    }
-    
-    let encoded = &auth_str[6..];
-    let decoded = base64::decode(encoded).map_err(|_| AuthError::InvalidFormat)?;
-    let credentials = String::from_utf8(decoded).map_err(|_| AuthError::InvalidFormat)?;
-    
-    let parts: Vec<&str> = credentials.splitn(2, ':').collect();
-    if parts.len() != 2 {
-        return Err(AuthError::InvalidFormat);
-    }
-    
-    Ok((parts[0].to_string(), parts[1].to_string()))
-}
-```
-
----
+The authentication middleware enforces security policies for protected endpoints using HTTP Basic Authentication. It performs several key functions:
+1. **Bypass Check**: Identifies public endpoints like the health check and allows them to proceed without verification.
+2. **Header Extraction**: Retrieves and decodes the `Authorization` header.
+3. **Format Validation**: Ensures the header is correctly formatted as "Basic " followed by Base64-encoded credentials.
+4. **Credential Verification**: Delegates the actual verification to the authentication service, which uses constant-time comparison to prevent timing attacks.
+5. **Authorization Enforcement**: Blocks access with a 401 status code if credentials are missing or invalid.
 
 ## Timeout Middleware
 
-### Class Diagram
-
-```mermaid
-classDiagram
-    class TimeoutMiddleware {
-        +timeout_layer(duration: Duration) Layer
-    }
-    
-    class Duration {
-        <<std::time>>
-    }
-    
-    TimeoutMiddleware ..> Duration : uses
-    
-    note for TimeoutMiddleware "Request timeout enforcement\nDefault: 30 seconds\nPrevents hung requests"
-```
-
-### Flow
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Middleware as TimeoutMiddleware
-    participant Handler
-    
-    Client->>Middleware: HTTP Request
-    Middleware->>Middleware: Start timer (30s)
-    Middleware->>Handler: Forward request
-    
-    alt Handler completes within timeout
-        Handler-->>Middleware: Response
-        Middleware-->>Client: 200 OK
-    else Timeout exceeded
-        Middleware->>Middleware: Cancel request
-        Middleware-->>Client: 504 Gateway Timeout
-    end
-```
-
-### Implementation
-
-```rust
-use tower::timeout::Timeout;
-use std::time::Duration;
-
-pub fn timeout_layer(duration: Duration) -> Timeout {
-    Timeout::new(duration)
-}
-
-// Usage in router
-let app = Router::new()
-    .route("/v1/magic/content", post(analyze_content_handler))
-    .layer(timeout_layer(Duration::from_secs(30)));
-```
-
-### Configuration
-
-| Endpoint | Timeout | Rationale |
-|----------|---------|-----------|
-| `/v1/ping` | 2s | Health check should be fast |
-| `/v1/magic/content` | 30s | File analysis can be slow for large files |
-| `/v1/magic/path` | 30s | File I/O + analysis |
-
----
+The timeout middleware prevents requests from hanging indefinitely and consuming system resources. It enforces a maximum duration for the entire request/response lifecycle. If the handler does not complete within the specified time (e.g., 30 seconds), the middleware cancels the operation and returns a 504 Gateway Timeout status to the client.
 
 ## Error Handler Middleware
 
-### Class Diagram
+The global error handler provides a standardized way to respond to failures across the entire middleware stack and handler execution. It intercepts errors and maps them to appropriate HTTP status codes:
+- **Timeouts**: Maps to 504 Gateway Timeout.
+- **Authentication**: Maps to 401 Unauthorized.
+- **Application Errors**: Maps to their semantic HTTP equivalents (400, 403, 404, 422).
+- **System Errors**: Maps any unhandled or unexpected failures to 500 Internal Server Error.
 
-```mermaid
-classDiagram
-    class ErrorHandlerMiddleware {
-        +error_handler_layer() Layer
-        +handle_error(error: BoxError) Response
-        +map_to_http_status(error: &Error) StatusCode
-    }
-    
-    class ErrorResponse {
-        +error: ErrorDetail
-    }
-    
-    class ErrorDetail {
-        +code: String
-        +message: String
-        +request_id: RequestId
-    }
-    
-    ErrorHandlerMiddleware ..> ErrorResponse : produces
-    ErrorHandlerMiddleware ..> ErrorDetail : uses
-    
-    note for ErrorHandlerMiddleware "Global error handler\nMaps all errors to HTTP responses\nIncludes request ID in errors"
-```
-
-### Flow
-
-```mermaid
-flowchart TD
-    Error[Error occurs] --> Handler[ErrorHandlerMiddleware]
-    Handler --> CheckType{Error type?}
-    
-    CheckType -->|ApplicationError| MapApp[Map to HTTP status]
-    CheckType -->|AuthError| Map401[401 Unauthorized]
-    CheckType -->|TimeoutError| Map504[504 Gateway Timeout]
-    CheckType -->|Unknown| Map500[500 Internal Server Error]
-    
-    MapApp --> CreateResponse[Create ErrorResponse]
-    Map401 --> CreateResponse
-    Map504 --> CreateResponse
-    Map500 --> CreateResponse
-    
-    CreateResponse --> AddRequestId[Add request ID]
-    AddRequestId --> Log[Log error]
-    Log --> Return[Return JSON response]
-    
-    style Return fill:#FFB6C1
-```
-
-### Implementation
-
-```rust
-pub fn error_handler_layer() -> HandleErrorLayer</* ... */> {
-    HandleErrorLayer::new(handle_error)
-}
-
-async fn handle_error(error: BoxError) -> (StatusCode, Json<ErrorResponse>) {
-    if error.is::<tower::timeout::error::Elapsed>() {
-        return (
-            StatusCode::GATEWAY_TIMEOUT,
-            Json(ErrorResponse::new("timeout", "Request timeout")),
-        );
-    }
-    
-    if let Some(auth_error) = error.downcast_ref::<AuthError>() {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse::new(
-                "authentication_required",
-                "Authentication failed",
-            )),
-        );
-    }
-    
-    // Default: Internal server error
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ErrorResponse::new(
-            "internal_error",
-            "Internal server error",
-        )),
-    )
-}
-```
+The error handler also ensures that all error responses follow the standard JSON structure and include the request ID for troubleshooting.
 
 ## Middleware Composition
 
-```rust
-pub fn create_app(/* dependencies */) -> Router {
-    Router::new()
-        // Routes
-        .route("/v1/ping", get(ping_handler))
-        .route("/v1/magic/content", post(analyze_content_handler))
-        .route("/v1/magic/path", post(analyze_path_handler))
-        // Middleware (applied in reverse order)
-        .layer(error_handler_layer())          // 4. Handle errors
-        .layer(auth_layer(auth_service))       // 3. Authenticate
-        .layer(timeout_layer(Duration::from_secs(30)))  // 2. Timeout
-        .layer(request_id_layer())             // 1. Request ID (first)
-}
-```
+Middleware layers are composed using a standard builder pattern during router initialization. They are applied in a specific order to ensure correct execution flow:
+1. **Request ID** (Outer): Always executed first to provide correlation IDs for subsequent layers.
+2. **Timeout**: Enforces limits on all downstream processing.
+3. **Authentication**: Secures endpoints before business logic execution.
+4. **Error Handler** (Inner): Catches and formats failures from the handlers.
 
 ## Design Rationale
 

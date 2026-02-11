@@ -67,201 +67,29 @@ classDiagram
 | `content` | `&self` | `&Bytes` | Get content reference |
 | `filename` | `&self` | `&WindowsCompatibleFilename` | Get filename reference |
 
-### Usage Example
+## Usage Pattern
 
-```rust
-let content = Bytes::from(vec![0x89, 0x50, 0x4E, 0x47]); // PNG header
-let filename = WindowsCompatibleFilename::new("image.png".to_string())?;
-let request = AnalyzeContentRequest::new(content, filename);
-```
+### AnalyzeContentRequest
 
----
+The AnalyzeContentRequest DTO is typically constructed in the presentation layer after extracting the binary body and filename from the HTTP request. Once created, it is passed to the AnalyzeContentUseCase for processing. It encapsulates the binary data and its associated metadata in a single immutable structure.
 
-## AnalyzePathRequest DTO
+### AnalyzePathRequest
 
-### Class Diagram
+The AnalyzePathRequest DTO is created when a request arrives at the path-based analysis endpoint. It wraps a validated RelativePath value object, ensuring that the use case receives a safe and well-formed path.
 
-```mermaid
-classDiagram
-    class AnalyzePathRequest {
-        +relative_path: RelativePath
-        +new(relative_path: RelativePath) Self
-        +relative_path() &RelativePath
-    }
-    
-    class RelativePath {
-        <<value object>>
-    }
-    
-    AnalyzePathRequest *-- RelativePath : contains
-    
-    note for AnalyzePathRequest "Request DTO\nDerives: Clone, Debug\nImmutable after construction"
-```
+### MagicResponse
 
-### Properties
+The MagicResponse DTO is the primary output of the system. It is constructed by use cases from domain entities and then serialized to JSON for the HTTP response. It includes the detected file type, a descriptive label, any encoding information, and a unique tracking ID for the request.
 
-| Property | Type | Description | Validation |
-|----------|------|-------------|------------|
-| `relative_path` | `RelativePath` | Relative path to file | Value object validation (no `..`, no leading `/`) |
+## DTO Mapping and Serialization
 
-### Methods
+The system uses a strict mapping approach to maintain layer isolation:
+1. **Input Mapping**: HTTP request data is transformed into request DTOs.
+2. **Internal Processing**: Use cases operate on DTOs and produce domain entities.
+3. **Output Mapping**: Domain entities are transformed into response DTOs.
+4. **Serialization**: Response DTOs are serialized into JSON format.
 
-| Method | Parameters | Return Type | Description |
-|--------|------------|-------------|-------------|
-| `new` | `relative_path: RelativePath` | `Self` | Constructor |
-| `relative_path` | `&self` | `&RelativePath` | Get path reference |
-
-### Usage Example
-
-```rust
-let path = RelativePath::new("documents/report.pdf")?;
-let request = AnalyzePathRequest::new(path);
-```
-
----
-
-## MagicResponse DTO
-
-### Class Diagram
-
-```mermaid
-classDiagram
-    class MagicResponse {
-        +request_id: RequestId
-        +mime_type: MimeType
-        +description: String
-        +encoding: Option~String~
-        +analyzed_at: DateTime~Utc~
-        +new(result: MagicResult) Self
-        +with_request_id(request_id: RequestId) Self
-    }
-    
-    class RequestId {
-        <<value object>>
-    }
-    
-    class MimeType {
-        <<value object>>
-    }
-    
-    class MagicResult {
-        <<entity>>
-    }
-    
-    MagicResponse *-- RequestId : contains
-    MagicResponse *-- MimeType : contains
-    MagicResponse ..> MagicResult : maps from
-    
-    note for MagicResponse "Response DTO\nDerives: Clone, Debug, Serialize\nJSON serializable"
-```
-
-### Properties
-
-| Property | Type | Description | JSON Example |
-|----------|------|-------------|--------------|
-| `request_id` | `RequestId` | Unique request identifier | `"550e8400-e29b-41d4-a716-446655440000"` |
-| `mime_type` | `MimeType` | Detected MIME type | `"text/plain"` |
-| `description` | `String` | Human-readable description | `"ASCII text"` |
-| `encoding` | `Option<String>` | Character encoding (if applicable) | `"utf-8"` or `null` |
-| `analyzed_at` | `DateTime<Utc>` | Analysis timestamp | `"2024-02-11T14:30:00Z"` |
-
-### Methods
-
-| Method | Parameters | Return Type | Description |
-|--------|------------|-------------|-------------|
-| `new` | `result: MagicResult` | `Self` | Map from domain entity, auto-generate request ID |
-| `with_request_id` | `self, request_id: RequestId` | `Self` | Builder: set specific request ID |
-
-### JSON Representation
-
-```json
-{
-  "request_id": "550e8400-e29b-41d4-a716-446655440000",
-  "mime_type": "text/plain",
-  "description": "ASCII text",
-  "encoding": "us-ascii",
-  "analyzed_at": "2024-02-11T14:30:00Z"
-}
-```
-
-### Usage Example
-
-```rust
-// Map from domain entity
-let magic_result = repository.analyze_buffer(data, filename)?;
-let response = MagicResponse::new(magic_result);
-
-// With custom request ID
-let request_id = RequestId::parse("550e8400-e29b-41d4-a716-446655440000")?;
-let response = MagicResponse::new(magic_result)
-    .with_request_id(request_id);
-```
-
-### Mapping from MagicResult
-
-```rust
-impl From<MagicResult> for MagicResponse {
-    fn from(result: MagicResult) -> Self {
-        MagicResponse {
-            request_id: RequestId::new(), // Auto-generate
-            mime_type: result.mime_type().clone(),
-            description: result.description().to_string(),
-            encoding: result.encoding().map(|s| s.to_string()),
-            analyzed_at: result.analyzed_at(),
-        }
-    }
-}
-```
-
----
-
-## DTO Mapping Flow
-
-```mermaid
-sequenceDiagram
-    participant HTTP as HTTP Request
-    participant RequestDTO
-    participant UseCase
-    participant Domain as Domain Entity
-    participant ResponseDTO
-    participant JSON as JSON Response
-    
-    HTTP->>RequestDTO: Deserialize<br/>(JSON → DTO)
-    RequestDTO->>UseCase: Pass to use case
-    UseCase->>Domain: Create/use domain objects
-    Domain-->>UseCase: Return MagicResult
-    UseCase->>ResponseDTO: Map to MagicResponse
-    ResponseDTO->>JSON: Serialize<br/>(DTO → JSON)
-    JSON-->>HTTP: Return HTTP 200
-```
-
-## DTO Design Principles
-
-| Principle | Description | Benefit |
-|-----------|-------------|---------|
-| **Immutability** | All fields immutable after construction | Thread-safe, no unexpected mutations |
-| **Validation at Construction** | Use value objects for validated fields | Invalid DTOs cannot be constructed |
-| **No Business Logic** | Pure data containers | Simple, testable, serializable |
-| **Derives Traits** | `Clone`, `Debug`, `Serialize`, `Deserialize` | Easy to use, log, and transmit |
-| **Layer Boundary** | Isolate domain from presentation | Domain changes don't break API |
-
-## Serialization
-
-All response DTOs implement `serde::Serialize`:
-
-```rust
-use serde::{Serialize, Deserialize};
-
-#[derive(Debug, Clone, Serialize)]
-pub struct MagicResponse {
-    pub request_id: RequestId,
-    pub mime_type: MimeType,
-    pub description: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub encoding: Option<String>,
-    pub analyzed_at: DateTime<Utc>,
-}
-```
+Serialization is controlled via standard attributes to handle optional fields (omitting null values from JSON) and formatting timestamps consistently using the ISO 8601 standard.
 
 ### Serialization Options
 

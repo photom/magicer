@@ -130,77 +130,34 @@ graph TD
     style Internal fill:#FFB6C1
 ```
 
-## Usage Example
+## Usage Scenario
 
-```rust
-// Dependency injection
-let repository = Arc::new(LibmagicRepository::new()?);
-let use_case = AnalyzeContentUseCase::new(repository);
+### Use Case Initialization
 
-// Execute use case
-let request = AnalyzeContentRequest {
-    content: Bytes::from(file_data),
-    filename: WindowsCompatibleFilename::new("document.pdf".to_string())?,
-};
+The AnalyzeContentUseCase is initialized by providing a thread-safe reference to a MagicRepository implementation. This is typically done during application startup when the dependency injection container is configured.
 
-let response = use_case.execute(request)?;
-println!("MIME Type: {}", response.mime_type.as_str());
-println!("Description: {}", response.description);
+### Executing Analysis
 
-// Error handling
-match use_case.execute(request) {
-    Ok(response) => {
-        // Success - return HTTP 200
-        Json(response)
-    },
-    Err(ApplicationError::BadRequest(msg)) => {
-        // Invalid input - return HTTP 400
-        StatusCode::BAD_REQUEST
-    },
-    Err(ApplicationError::UnprocessableEntity(msg)) => {
-        // Analysis failed - return HTTP 422
-        StatusCode::UNPROCESSABLE_ENTITY
-    },
-    Err(_) => {
-        // Internal error - return HTTP 500
-        StatusCode::INTERNAL_SERVER_ERROR
-    },
-}
-```
+To analyze content, a request object is created containing the binary data and the original filename. When the execute method is called with this request, the use case validates the input, delegates the actual magic analysis to the repository, and returns a formatted response.
+
+### Handling Failures
+
+The use case provides semantic error handling. If the input data is empty or invalid, it returns a BadRequest error. If the libmagic analysis fails due to data corruption or other internal issues, it returns an UnprocessableEntity error. Unexpected system failures are returned as InternalError.
 
 ## Request Validation
 
-```mermaid
-flowchart TD
-    Request[AnalyzeContentRequest] --> CheckContent{Content empty?}
-    CheckContent -->|Yes| ErrEmpty[Err: Content is empty]
-    CheckContent -->|No| CheckSize{Content > 100MB?}
-    CheckSize -->|Yes| ErrTooLarge[Err: Content too large]
-    CheckSize -->|No| CheckFilename{Valid filename?}
-    CheckFilename -->|No| ErrFilename[Err: Invalid filename]
-    CheckFilename -->|Yes| Valid[Request is valid]
-    
-    style Valid fill:#90EE90
-    style ErrEmpty fill:#FFB6C1
-    style ErrTooLarge fill:#FFB6C1
-    style ErrFilename fill:#FFB6C1
-```
+The use case performs several validation steps before proceeding with analysis:
+1. **Empty Check**: Rejects requests where the binary content is empty.
+2. **Size Check**: While the absolute limit is enforced at the HTTP layer, the use case ensures the content is within reasonable processing bounds.
+3. **Filename Integrity**: Verifies that the provided filename hint is valid and safe.
 
 ## Response Construction
 
-```rust
-impl From<MagicResult> for MagicResponse {
-    fn from(result: MagicResult) -> Self {
-        MagicResponse {
-            request_id: RequestId::new(),
-            mime_type: result.mime_type().clone(),
-            description: result.description().to_string(),
-            encoding: result.encoding().map(|s| s.to_string()),
-            analyzed_at: result.analyzed_at(),
-        }
-    }
-}
-```
+Upon successful analysis, the use case transforms the domain-level MagicResult entity into an application-level MagicResponse DTO. This process involves:
+1. Generating a new unique RequestId for tracking.
+2. Extracting the MIME type and human-readable description.
+3. Including the character encoding if one was detected.
+4. Recording the precise UTC timestamp when the analysis was completed.
 
 ## Dependencies
 

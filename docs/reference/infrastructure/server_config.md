@@ -49,293 +49,66 @@ classDiagram
     note for ServerConfig "Configuration management\nTOML + env var support\nValidation on load"
 ```
 
-## Configuration File Format
+## Configuration Specification
 
-```toml
-[server]
-host = "0.0.0.0"
-port = 8080
-max_connections = 1000
-connection_backlog = 1024
-request_timeout_ms = 30000
-max_body_size_mb = 100
+### Server Settings
 
-[sandbox]
-root_path = "/var/data/uploads"
-allow_symlinks = false
+| Field | Type | Description |
+|-------|------|-------------|
+| `host` | String | IP address to bind (e.g., "0.0.0.0") |
+| `port` | Unsigned 16-bit | TCP port for the HTTP server |
+| `max_connections` | Unsigned 32-bit | Maximum concurrent active connections |
+| `connection_backlog` | Unsigned 32-bit | OS-level listen queue size |
+| `request_timeout_ms` | Unsigned 64-bit | Request processing timeout in milliseconds |
+| `max_body_size_mb` | Unsigned 64-bit | Maximum allowed request body size in MB |
 
-[magic]
-database_path = "/usr/share/misc/magic.mgc"  # Optional, uses default if omitted
+### Sandbox Settings
 
-[logging]
-level = "info"
-format = "json"
-```
+| Field | Type | Description |
+|-------|------|-------------|
+| `root_path` | Path | Root directory for file boundary enforcement |
+| `allow_symlinks` | Boolean | Whether to allow resolution of internal symlinks |
 
-## Loading Priority
+### Magic Settings
 
-```mermaid
-flowchart TD
-    Load[Load Configuration] --> FileExists{Config file<br/>exists?}
-    FileExists -->|Yes| LoadFile[Load from file]
-    FileExists -->|No| Defaults[Use defaults]
-    
-    LoadFile --> EnvVars[Apply environment variable overrides]
-    Defaults --> EnvVars
-    
-    EnvVars --> Validate[Validate configuration]
-    Validate --> Valid{Valid?}
-    Valid -->|No| Error[Err: Validation failed]
-    Valid -->|Yes| Config[Ok ServerConfig]
-    
-    style Config fill:#90EE90
-    style Error fill:#FFB6C1
-```
+| Field | Type | Description |
+|-------|------|-------------|
+| `database_path` | Optional Path | Path to custom magic database file |
 
-## Environment Variable Overrides
+### Logging Settings
 
-| Environment Variable | TOML Path | Type | Example |
-|---------------------|-----------|------|---------|
-| `SERVER_HOST` | `server.host` | String | `0.0.0.0` |
-| `SERVER_PORT` | `server.port` | u16 | `8080` |
-| `SERVER_MAX_CONNECTIONS` | `server.max_connections` | u32 | `1000` |
-| `SERVER_REQUEST_TIMEOUT_MS` | `server.request_timeout_ms` | u64 | `30000` |
-| `SANDBOX_ROOT_PATH` | `sandbox.root_path` | PathBuf | `/var/data/uploads` |
-| `SANDBOX_ALLOW_SYMLINKS` | `sandbox.allow_symlinks` | bool | `false` |
-| `MAGIC_DATABASE_PATH` | `magic.database_path` | PathBuf | `/usr/share/misc/magic.mgc` |
-| `LOG_LEVEL` | `logging.level` | String | `info` |
-| `LOG_FORMAT` | `logging.format` | String | `json` |
+| Field | Type | Description |
+|-------|------|-------------|
+| `level` | String | Log verbosity (error, warn, info, debug, trace) |
+| `format` | String | Output format (json, pretty, compact) |
 
-## Validation Rules
+## Usage Scenario
 
-```mermaid
-flowchart TD
-    Validate[validate] --> CheckHost{Host valid?}
-    CheckHost -->|No| ErrHost[Err: Invalid host]
-    CheckHost -->|Yes| CheckPort{Port valid?<br/>1-65535}
-    CheckPort -->|No| ErrPort[Err: Invalid port]
-    CheckPort -->|Yes| CheckSandbox{Sandbox dir<br/>exists?}
-    CheckSandbox -->|No| ErrSandbox[Err: Sandbox not found]
-    CheckSandbox -->|Yes| CheckWritable{Sandbox<br/>writable?}
-    CheckWritable -->|No| ErrPerms[Err: Permission denied]
-    CheckWritable -->|Yes| CheckMagicDB{Magic DB<br/>path set?}
-    CheckMagicDB -->|No| Skip[Skip: Use default]
-    CheckMagicDB -->|Yes| DBExists{DB file exists?}
-    DBExists -->|No| ErrDB[Err: Magic DB not found]
-    DBExists -->|Yes| Success[Ok: Valid config]
-    Skip --> Success
-    
-    style Success fill:#90EE90
-    style ErrHost fill:#FFB6C1
-    style ErrPort fill:#FFB6C1
-    style ErrSandbox fill:#FFB6C1
-    style ErrPerms fill:#FFB6C1
-    style ErrDB fill:#FFB6C1
-```
+### Loading Configuration
 
-## ServerSettings Constraints
+The server configuration can be loaded from multiple sources with a defined priority. Typically, the system attempts to read a TOML file from a standard location (e.g., `config/config.toml`). If any environment variables are present, they override the values found in the file. Finally, if any settings are still missing, sensible defaults are applied.
 
-| Field | Type | Min | Max | Default |
-|-------|------|-----|-----|---------|
-| `host` | `String` | - | - | `0.0.0.0` |
-| `port` | `u16` | 1 | 65535 | `8080` |
-| `max_connections` | `u32` | 1 | 100000 | `1000` |
-| `connection_backlog` | `u32` | 1 | 65535 | `1024` |
-| `request_timeout_ms` | `u64` | 100 | 300000 | `30000` |
-| `max_body_size_mb` | `usize` | 1 | 1000 | `100` |
+### Validation during Startup
 
-## Usage Example
+Once the configuration is loaded, it undergoes a strict validation process. The system ensures that:
+- Port numbers are within the valid range (1-65535).
+- The sandbox root directory exists and is accessible.
+- If a custom magic database is specified, the file is readable.
+- All numeric limits are positive and within reasonable bounds.
 
-```rust
-// Load from file
-let config = ServerConfig::from_file(Path::new("config/config.toml"))?;
+Failure to validate results in an immediate startup error, preventing the server from running in an inconsistent state.
 
-// Load from environment (with defaults)
-let config = ServerConfig::from_env()?;
+### Dependency Injection
 
-// Access settings
-println!("Server listening on {}:{}", config.server.host, config.server.port);
-println!("Sandbox root: {:?}", config.sandbox.root_path);
+The validated configuration is wrapped in an atomic reference counter and included in the application state. This allows handlers and middleware to access configuration parameters efficiently across multiple threads.
 
-// Validate
-config.validate()?;
+## Testing Strategy
 
-// Use in application
-let sandbox = PathSandbox::new(&config.sandbox.root_path)?;
-let repository = if let Some(db_path) = &config.magic.database_path {
-    LibmagicRepository::with_database(db_path.to_str().unwrap())?
-} else {
-    LibmagicRepository::new()?
-};
-```
-
-## Configuration Loading Sequence
-
-```mermaid
-sequenceDiagram
-    participant Main
-    participant Config as ServerConfig
-    participant File as TOML File
-    participant Env as Environment
-    participant Validator
-    
-    Main->>Config: from_file("config.toml")
-    Config->>File: Read TOML
-    File-->>Config: Raw TOML data
-    Config->>Config: Parse into struct
-    Config->>Env: Check env var overrides
-    Env-->>Config: Override values
-    Config->>Validator: validate()
-    Validator->>Validator: Check all constraints
-    alt Validation fails
-        Validator-->>Config: Err(ValidationError)
-        Config-->>Main: Err(InfrastructureError)
-    else Validation succeeds
-        Validator-->>Config: Ok
-        Config-->>Main: Ok(ServerConfig)
-    end
-```
-
-## Error Handling
-
-| Error Type | Cause | Recovery |
-|------------|-------|----------|
-| `FileNotFound` | Config file missing | Use `from_env()` with defaults |
-| `ParseError` | Invalid TOML syntax | Fix TOML file |
-| `ValidationError` | Invalid values | Fix config or environment |
-| `PermissionDenied` | Cannot read config file | Check file permissions |
-| `InvalidPath` | Sandbox path invalid | Create directory, check path |
-
-## Default Configuration
-
-```rust
-impl Default for ServerConfig {
-    fn default() -> Self {
-        ServerConfig {
-            server: ServerSettings {
-                host: "0.0.0.0".to_string(),
-                port: 8080,
-                max_connections: 1000,
-                connection_backlog: 1024,
-                request_timeout_ms: 30000,
-                max_body_size_mb: 100,
-            },
-            sandbox: SandboxSettings {
-                root_path: PathBuf::from("/var/data/uploads"),
-                allow_symlinks: false,
-            },
-            magic: MagicSettings {
-                database_path: None, // Use libmagic default
-            },
-            logging: LoggingSettings {
-                level: "info".to_string(),
-                format: "json".to_string(),
-            },
-        }
-    }
-}
-```
-
-## Testing
-
-```rust
-#[test]
-fn test_load_from_file() {
-    let config = ServerConfig::from_file(Path::new("config/test.toml")).unwrap();
-    assert_eq!(config.server.port, 8080);
-    assert_eq!(config.server.host, "0.0.0.0");
-}
-
-#[test]
-fn test_env_var_override() {
-    std::env::set_var("SERVER_PORT", "9090");
-    let config = ServerConfig::from_env().unwrap();
-    assert_eq!(config.server.port, 9090);
-    std::env::remove_var("SERVER_PORT");
-}
-
-#[test]
-fn test_validation_invalid_port() {
-    let mut config = ServerConfig::default();
-    config.server.port = 0; // Invalid
-    let result = config.validate();
-    assert!(matches!(result, Err(ValidationError::InvalidPort(_))));
-}
-
-#[test]
-fn test_validation_sandbox_not_found() {
-    let mut config = ServerConfig::default();
-    config.sandbox.root_path = PathBuf::from("/nonexistent/path");
-    let result = config.validate();
-    assert!(matches!(result, Err(ValidationError::SandboxNotFound(_))));
-}
-```
-
-## Serde Integration
-
-```rust
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ServerConfig {
-    pub server: ServerSettings,
-    pub sandbox: SandboxSettings,
-    pub magic: MagicSettings,
-    pub logging: LoggingSettings,
-}
-
-impl ServerConfig {
-    pub fn from_file(path: &Path) -> Result<Self, InfrastructureError> {
-        let contents = std::fs::read_to_string(path)?;
-        let config: ServerConfig = toml::from_str(&contents)?;
-        config.validate()?;
-        Ok(config)
-    }
-}
-```
-
-## Deployment Scenarios
-
-### Development
-
-```toml
-[server]
-host = "127.0.0.1"
-port = 8080
-
-[logging]
-level = "debug"
-format = "pretty"
-```
-
-### Production
-
-```toml
-[server]
-host = "0.0.0.0"
-port = 8080
-max_connections = 10000
-
-[sandbox]
-root_path = "/var/data/uploads"
-allow_symlinks = false
-
-[logging]
-level = "info"
-format = "json"
-```
-
-### Docker
-
-```bash
-# Use environment variables
-docker run \
-  -e SERVER_HOST=0.0.0.0 \
-  -e SERVER_PORT=8080 \
-  -e SANDBOX_ROOT_PATH=/data \
-  -v /host/data:/data \
-  magicer:latest
-```
+Testing the configuration manager involves verifying the loading and priority logic:
+- **File Loading**: Confirms that valid TOML files are correctly parsed into the internal structures.
+- **Environment Overrides**: Ensures that setting an environment variable like `SERVER_PORT` correctly overrides the file-based value.
+- **Invalid Values**: Verifies that out-of-range ports or non-existent paths trigger validation errors.
+- **Defaults**: Confirms that the system provides usable default values when no configuration is provided.
 
 ## Design Rationale
 

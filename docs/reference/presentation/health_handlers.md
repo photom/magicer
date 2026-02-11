@@ -29,241 +29,44 @@ classDiagram
     note for HealthHandler "Health check endpoint\nNo authentication required\nPublic endpoint"
 ```
 
-## Handler Signature
+## Handler Signature and Flow
 
-```rust
-pub async fn ping_handler(
-    State(use_case): State<Arc<HealthCheckUseCase>>,
-) -> Result<Json<HealthResponse>, StatusCode>
-```
+The ping handler is an asynchronous function that receives the health check use case through the application state. It executes the use case and returns a JSON response containing the system status and current timestamp. This endpoint is public and does not require authentication, making it ideal for high-frequency polling by load balancers and monitoring agents.
 
-## Request Flow
+## Response Codes and Examples
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Handler as ping_handler
-    participant UseCase as HealthCheckUseCase
-    participant Response
-    
-    Client->>Handler: GET /v1/ping
-    Handler->>UseCase: execute()
-    UseCase->>Response: Create HealthResponse
-    Response-->>UseCase: Ok(HealthResponse)
-    UseCase-->>Handler: Ok(HealthResponse)
-    Handler-->>Client: 200 OK<br/>{"status": "ok", "timestamp": "..."}
-    
-    Note over Client,Handler: No authentication<br/>No request body<br/>Always succeeds
-```
+The health check endpoint is designed for maximum availability and reliability. 
 
-## Request Example
+| HTTP Status | Condition |
+|-------------|-----------|
+| 200 OK | Normal operation - system is responding |
+| 500 Internal Error | Catastrophic failure - process is unresponsive |
 
-```http
-GET /v1/ping HTTP/1.1
-Host: api.example.com
-```
+A successful response includes:
+- **Status**: A string confirming the service is "ok".
+- **Timestamp**: The current UTC time of the check.
 
-## Response Example
+## Integration Scenarios
 
-```http
-HTTP/1.1 200 OK
-Content-Type: application/json
-
-{
-  "status": "ok",
-  "timestamp": "2024-02-11T14:30:00Z"
-}
-```
-
-## Handler Implementation
-
-```rust
-pub async fn ping_handler(
-    State(use_case): State<Arc<HealthCheckUseCase>>,
-) -> Result<Json<HealthResponse>, StatusCode> {
-    use_case
-        .execute()
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-}
-```
-
-## Response Codes
-
-```mermaid
-flowchart TD
-    Request[GET /v1/ping] --> Execute[use_case.execute]
-    Execute --> Result{Result?}
-    Result -->|Ok| Success[200 OK<br/>JSON response]
-    Result -->|Err| Error[500 Internal Server Error]
-    
-    style Success fill:#90EE90
-    style Error fill:#FF6B6B
-    
-    Note[Error is extremely rare<br/>Only on catastrophic failure]
-```
-
-| HTTP Status | Condition | Response Body |
-|-------------|-----------|---------------|
-| 200 OK | Always (normal operation) | `{"status": "ok", "timestamp": "..."}` |
-| 500 Internal Server Error | Catastrophic failure (extremely rare) | Empty or error message |
-
-## Use Cases
-
-```mermaid
-graph TD
-    HealthCheck[Health Check Endpoint]
-    
-    HealthCheck --> LoadBalancer[Load Balancer<br/>Health Check]
-    LoadBalancer --> RemoveUnhealthy[Remove unhealthy instances]
-    
-    HealthCheck --> K8s[Kubernetes<br/>Liveness Probe]
-    K8s --> RestartPod[Restart unhealthy pods]
-    
-    HealthCheck --> Monitoring[Monitoring<br/>System]
-    Monitoring --> Alert[Alert on failures]
-    
-    HealthCheck --> Deployment[Deployment<br/>Verification]
-    Deployment --> Verify[Confirm service is running]
-    
-    style HealthCheck fill:#E3F2FD
-    style LoadBalancer fill:#FFF3E0
-    style K8s fill:#E8F5E9
-    style Monitoring fill:#F3E5F5
-    style Deployment fill:#E1F5FE
-```
-
-## Configuration Examples
-
-### Kubernetes Liveness Probe
-
-```yaml
-livenessProbe:
-  httpGet:
-    path: /v1/ping
-    port: 8080
-  initialDelaySeconds: 10
-  periodSeconds: 10
-  timeoutSeconds: 2
-  failureThreshold: 3
-```
-
-### Load Balancer Health Check (AWS ALB)
-
-```yaml
-HealthCheckPath: /v1/ping
-HealthCheckProtocol: HTTP
-HealthCheckIntervalSeconds: 30
-HealthCheckTimeoutSeconds: 5
-HealthyThresholdCount: 2
-UnhealthyThresholdCount: 3
-```
-
-### Docker Compose Health Check
-
-```yaml
-healthcheck:
-  test: ["CMD", "curl", "-f", "http://localhost:8080/v1/ping"]
-  interval: 30s
-  timeout: 3s
-  retries: 3
-  start_period: 40s
-```
+The health check handler facilitates integration with various infrastructure components:
+- **Load Balancers**: Used to determine if an instance should receive traffic.
+- **Orchestrators**: Provides a liveness probe for Kubernetes to restart unhealthy containers.
+- **Monitoring**: Enables dashboards to track uptime and responsiveness.
+- **CI/CD**: Allows deployment scripts to verify the service started successfully.
 
 ## Performance Characteristics
 
-| Metric | Value | Notes |
-|--------|-------|-------|
-| **Response Time** | < 1ms | No I/O, pure computation |
-| **CPU Usage** | Negligible | Simple timestamp generation |
-| **Memory Usage** | < 1KB | Minimal allocation |
-| **Throughput** | > 100,000 req/s | Can handle high load balancer polling |
+The handler is highly optimized for performance:
+- **Latency**: Typically responds in under 1 millisecond as it involves no I/O operations.
+- **Resource Usage**: Extremely low CPU and memory footprint.
+- **Throughput**: Capable of handling tens of thousands of requests per second on standard hardware.
 
-## Testing
+## Testing Strategy
 
-```rust
-#[tokio::test]
-async fn test_ping_success() {
-    let app = create_test_app();
-    
-    let response = app
-        .get("/v1/ping")
-        .send()
-        .await;
-    
-    assert_eq!(response.status(), StatusCode::OK);
-    
-    let json: HealthResponse = response.json().await;
-    assert_eq!(json.status, "ok");
-    assert!(json.timestamp <= Utc::now());
-}
-
-#[tokio::test]
-async fn test_ping_no_auth_required() {
-    let app = create_test_app();
-    
-    // No Authorization header
-    let response = app
-        .get("/v1/ping")
-        .send()
-        .await;
-    
-    // Should succeed without authentication
-    assert_eq!(response.status(), StatusCode::OK);
-}
-
-#[tokio::test]
-async fn test_ping_timestamp_freshness() {
-    let app = create_test_app();
-    
-    let before = Utc::now();
-    
-    let response = app
-        .get("/v1/ping")
-        .send()
-        .await;
-    
-    let after = Utc::now();
-    let json: HealthResponse = response.json().await;
-    
-    assert!(json.timestamp >= before);
-    assert!(json.timestamp <= after);
-}
-```
-
-## Monitoring Integration
-
-### Prometheus Metrics
-
-```rust
-// Increment counter on each health check
-pub async fn ping_handler(
-    State(use_case): State<Arc<HealthCheckUseCase>>,
-) -> Result<Json<HealthResponse>, StatusCode> {
-    HEALTH_CHECK_REQUESTS_TOTAL.inc();
-    
-    use_case
-        .execute()
-        .map(Json)
-        .map_err(|_| {
-            HEALTH_CHECK_FAILURES_TOTAL.inc();
-            StatusCode::INTERNAL_SERVER_ERROR
-        })
-}
-```
-
-### Grafana Dashboard Query
-
-```promql
-# Success rate
-rate(health_check_requests_total[5m]) - rate(health_check_failures_total[5m])
-
-# Failure rate
-rate(health_check_failures_total[5m])
-
-# Response time (if instrumented)
-histogram_quantile(0.99, health_check_duration_seconds_bucket[5m])
-```
+The health check is verified through simple integration tests:
+- **Success Verification**: Confirms that a GET request returns 200 OK.
+- **Unauthenticated Access**: Ensures that no Authorization header is required.
+- **Data Freshness**: Validates that the returned timestamp is recent and correctly formatted.
 
 ## Comparison: Liveness vs Readiness
 

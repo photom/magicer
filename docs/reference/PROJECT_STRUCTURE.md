@@ -213,68 +213,25 @@ Immutable objects without identity, validated on construction.
 #### **repositories/**
 Trait definitions for data access.
 
-- `magic_repository.rs`: `trait MagicRepository`
+- `magic_repository.rs`: Defines the core contract for file magic analysis operations.
 
-**Trait Method Signatures:**
-
-```rust
-pub trait MagicRepository: Send + Sync {
-    /// Analyzes binary data from any source (memory, mmap, static).
-    /// 
-    /// Accepts any byte slice regardless of source:
-    /// - In-memory buffers (Vec<u8>, Bytes)
-    /// - Memory-mapped file slices (via mmap)
-    /// - Static data (compile-time arrays)
-    /// - Network buffers (HTTP body)
-    ///
-    /// # Arguments
-    /// * `data` - Byte slice to analyze (from any source)
-    /// * `filename` - Original filename for libmagic context
-    ///
-    /// # Returns
-    /// * `Ok(MagicResult)` - Analysis successful
-    /// * `Err(DomainError)` - Analysis failed or invalid input
-    fn analyze_buffer(
-        &self,
-        data: &[u8],
-        filename: &str,
-    ) -> Result<MagicResult, DomainError>;
-
-    /// Analyzes file by path (libmagic opens file internally).
-    ///
-    /// # Arguments
-    /// * `path` - Absolute path to file (must be within sandbox)
-    ///
-    /// # Returns
-    /// * `Ok(MagicResult)` - Analysis successful
-    /// * `Err(DomainError)` - File not found or analysis failed
-    fn analyze_file(
-        &self,
-        path: &Path,
-    ) -> Result<MagicResult, DomainError>;
-}
-```
+**Repository Interface Design:**
+The magic repository provides two primary methods for analysis. The first method accepts a raw byte slice and a filename hint, allowing it to process data from any source—including in-memory buffers, memory-mapped files, and network streams—without additional copies. The second method allows for direct analysis of a file by its system path, delegating the file opening and reading to the underlying library.
 
 **Unified Interface Design:**
+By accepting a generic byte slice, the analysis interface remains simple and flexible. It can handle various data sources uniformly:
+- **In-Memory**: Standard vectors or byte buffers from small file reads.
+- **Memory-Mapped**: Efficient zero-copy slices from large files.
+- **Static**: Compile-time embedded data.
+- **Network**: Direct processing of HTTP request body chunks.
 
-The `analyze_buffer` method uses a unified interface accepting `&[u8]` from any source:
-
-| Source Type | Example | Works with `&[u8]` |
-|-------------|---------|-------------------|
-| In-Memory Buffer | `Vec<u8>`, `Bytes` | ✅ Yes |
-| Memory-Mapped File | `MmapBuffer::as_ref()` | ✅ Yes |
-| Static Data | `&[u8]` literal | ✅ Yes |
-| Network Buffer | HTTP body bytes | ✅ Yes |
-| Any `AsRef<[u8]>` | Custom types | ✅ Yes |
-
-**Key Design Decision:**
-
-Single method for all buffer sources rather than separate methods for mmap vs memory. The implementation treats all `&[u8]` identically when passing to libmagic FFI.
+**Design Benefits:**
+This unified approach avoids the need for specialized methods for different memory models and ensures that the implementation treats all provided data identically when passing it to the low-level FFI layer.
 
 **Returns:**
-- Domain errors only (no infrastructure types leak)
-- `DomainError::ValidationError` for invalid inputs
-- `DomainError::MagicError` for analysis failures
+- Exclusively returns domain-specific results and errors.
+- Ensures no infrastructure types (like library-specific error codes) leak into the domain or application layers.
+- Uses semantic variants for common failures like invalid input or analysis errors.
 
 #### **services/**
 Domain services for multi-entity operations.
@@ -520,25 +477,10 @@ Shared test utilities:
 ## 6. Build Artifacts
 
 ### **Development**
-```bash
-# Debug build
-cargo build
-# Output: target/debug/magicer
-
-# Run tests
-cargo test
-# Coverage: target/coverage/
-```
+During development, the project is typically built in debug mode to include symbols and enable fast recompilation. Standard build tools generate an executable binary in the debug target directory. Unit and integration tests can be executed using the common test runner, which also facilitates coverage reporting.
 
 ### **Release**
-```bash
-# Optimized build
-cargo build --release
-# Output: target/release/magicer (stripped, ~5MB)
-
-# Docker image
-docker build -t magicer:latest .
-```
+For production deployment, an optimized build is generated. This build utilizes more aggressive compiler optimizations and strips debug symbols to minimize the binary size. The resulting artifact is typically a standalone executable. Additionally, the project can be packaged as a Docker image for containerized environments, ensuring all necessary system libraries like libmagic are included.
 
 ---
 

@@ -52,331 +52,51 @@ classDiagram
     note for MagicResponse "Success response\nDerives: Serialize, Clone, Debug\nJSON output format"
 ```
 
-### JSON Structure
+## Success Response: MagicResponse
 
-```json
-{
-  "request_id": "550e8400-e29b-41d4-a716-446655440000",
-  "mime_type": "application/pdf",
-  "description": "PDF document, version 1.7",
-  "encoding": null,
-  "analyzed_at": "2024-02-11T14:30:00Z"
-}
-```
+The success response provides the results of a file magic analysis. It is serialized to JSON and returned with a 200 OK status.
 
-### Fields
+### Success Fields
 
-| Field | Type | Required | Description | Example |
-|-------|------|----------|-------------|---------|
-| `request_id` | `String` (UUID) | Yes | Unique request identifier | `"550e8400-..."` |
-| `mime_type` | `String` | Yes | MIME type of analyzed file | `"text/plain"` |
-| `description` | `String` | Yes | Human-readable description | `"ASCII text"` |
-| `encoding` | `String?` | No | Character encoding (if applicable) | `"utf-8"` |
-| `analyzed_at` | `String` (ISO 8601) | Yes | Analysis timestamp (UTC) | `"2024-02-11T14:30:00Z"` |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `request_id` | UUID String | Yes | Unique tracking identifier for the request |
+| `mime_type` | String | Yes | The detected MIME type (e.g., "application/pdf") |
+| `description` | String | Yes | Human-readable file type description |
+| `encoding` | String | No | Character encoding if applicable (e.g., "utf-8") |
+| `analyzed_at` | DateTime | Yes | Precise UTC timestamp of the analysis |
 
-### Serialization
+## Error Response: ErrorResponse
 
-```rust
-use serde::Serialize;
-use chrono::{DateTime, Utc};
+When an operation fails, the server returns a standardized error response. This ensures that clients can handle failures consistently across all endpoints.
 
-#[derive(Debug, Clone, Serialize)]
-pub struct MagicResponse {
-    pub request_id: RequestId,
-    pub mime_type: MimeType,
-    pub description: String,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub encoding: Option<String>,
-    
-    #[serde(with = "chrono::serde::ts_seconds")]
-    pub analyzed_at: DateTime<Utc>,
-}
+### Error Fields
 
-impl From<MagicResult> for MagicResponse {
-    fn from(result: MagicResult) -> Self {
-        Self {
-            request_id: RequestId::new(),
-            mime_type: result.mime_type().clone(),
-            description: result.description().to_string(),
-            encoding: result.encoding().map(|s| s.to_string()),
-            analyzed_at: result.analyzed_at(),
-        }
-    }
-}
-```
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `error.code` | String | Yes | Machine-readable machine code (e.g., "validation_error") |
+| `error.message` | String | Yes | Descriptive message explaining the failure |
+| `error.request_id` | UUID String | No | Request identifier for log correlation |
 
-### Usage in Handlers
+### Standard Error Codes
 
-```rust
-pub async fn analyze_content_handler(
-    State(use_case): State<Arc<AnalyzeContentUseCase>>,
-    Query(query): Query<FilenameQuery>,
-    body: Bytes,
-) -> Result<Json<MagicResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let request = AnalyzeContentRequest::new(body, query.filename)?;
-    
-    let response = use_case.execute(request)?;
-    
-    Ok(Json(response))  // Axum serializes to JSON
-}
-```
+| Code | HTTP Status | Use Case |
+|------|-------------|----------|
+| `validation_error` | 400 | Invalid input parameters or body |
+| `authentication_required`| 401 | Missing or invalid Basic Auth credentials |
+| `access_denied` | 403 | Path traversal or sandbox violation |
+| `not_found` | 404 | Specified file does not exist |
+| `processing_error` | 422 | Semantic failure during analysis |
+| `internal_error` | 500 | Unexpected system failure |
+| `timeout` | 504 | Analysis exceeded the allowed time limit |
 
----
+## Response Serialization and Mapping
 
-## ErrorResponse
-
-### Class Diagram
-
-```mermaid
-classDiagram
-    class ErrorResponse {
-        +error: ErrorDetail
-        +new(code: &str, message: &str) Self
-        +with_request_id(request_id: RequestId) Self
-    }
-    
-    class ErrorDetail {
-        +code: String
-        +message: String
-        +request_id: Option~RequestId~
-    }
-    
-    ErrorResponse *-- ErrorDetail : contains
-    
-    note for ErrorResponse "Error response\nDerives: Serialize, Clone, Debug\nConsistent error format"
-```
-
-### JSON Structure
-
-```json
-{
-  "error": {
-    "code": "validation_error",
-    "message": "Invalid filename: Filename too long (311, max 310)",
-    "request_id": "550e8400-e29b-41d4-a716-446655440000"
-  }
-}
-```
-
-### Fields
-
-| Field | Type | Required | Description | Example |
-|-------|------|----------|-------------|---------|
-| `error.code` | `String` | Yes | Machine-readable error code | `"validation_error"` |
-| `error.message` | `String` | Yes | Human-readable error message | `"Invalid filename"` |
-| `error.request_id` | `String?` | No | Request ID for tracing | `"550e8400-..."` |
-
-### Error Codes
-
-| Code | HTTP Status | Description |
-|------|-------------|-------------|
-| `validation_error` | 400 | Input validation failed |
-| `authentication_required` | 401 | Authentication missing or invalid |
-| `access_denied` | 403 | Authenticated but not authorized |
-| `not_found` | 404 | Resource not found |
-| `processing_error` | 422 | Valid input but processing failed |
-| `internal_error` | 500 | Unexpected system error |
-| `timeout` | 504 | Request timeout |
-
-### Serialization
-
-```rust
-use serde::Serialize;
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ErrorResponse {
-    pub error: ErrorDetail,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ErrorDetail {
-    pub code: String,
-    pub message: String,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_id: Option<RequestId>,
-}
-
-impl ErrorResponse {
-    pub fn new(code: &str, message: &str) -> Self {
-        Self {
-            error: ErrorDetail {
-                code: code.to_string(),
-                message: message.to_string(),
-                request_id: None,
-            },
-        }
-    }
-    
-    pub fn with_request_id(mut self, request_id: RequestId) -> Self {
-        self.error.request_id = Some(request_id);
-        self
-    }
-}
-```
-
-### Usage in Handlers
-
-```rust
-pub async fn analyze_content_handler(
-    State(use_case): State<Arc<AnalyzeContentUseCase>>,
-    Query(query): Query<FilenameQuery>,
-    body: Bytes,
-) -> Result<Json<MagicResponse>, (StatusCode, Json<ErrorResponse>)> {
-    // Validate input
-    if body.is_empty() {
-        let error = ErrorResponse::new(
-            "validation_error",
-            "Request body is empty"
-        );
-        return Err((StatusCode::BAD_REQUEST, Json(error)));
-    }
-    
-    // Execute use case
-    use_case
-        .execute(request)
-        .map(Json)
-        .map_err(|e| {
-            let (status, error) = map_application_error(e);
-            (status, Json(error))
-        })
-}
-
-fn map_application_error(error: ApplicationError) -> (StatusCode, ErrorResponse) {
-    match error {
-        ApplicationError::BadRequest(msg) => (
-            StatusCode::BAD_REQUEST,
-            ErrorResponse::new("validation_error", &msg),
-        ),
-        ApplicationError::NotFound(msg) => (
-            StatusCode::NOT_FOUND,
-            ErrorResponse::new("not_found", &msg),
-        ),
-        ApplicationError::Forbidden(msg) => (
-            StatusCode::FORBIDDEN,
-            ErrorResponse::new("access_denied", &msg),
-        ),
-        ApplicationError::UnprocessableEntity(msg) => (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            ErrorResponse::new("processing_error", &msg),
-        ),
-        ApplicationError::InternalError(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            ErrorResponse::new("internal_error", "Internal server error"),
-        ),
-        ApplicationError::Timeout => (
-            StatusCode::GATEWAY_TIMEOUT,
-            ErrorResponse::new("timeout", "Request timeout"),
-        ),
-        _ => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            ErrorResponse::new("internal_error", "Unknown error"),
-        ),
-    }
-}
-```
-
----
-
-## Response Examples
-
-### Success Response
-
-```http
-HTTP/1.1 200 OK
-Content-Type: application/json
-X-Request-ID: 550e8400-e29b-41d4-a716-446655440000
-
-{
-  "request_id": "550e8400-e29b-41d4-a716-446655440000",
-  "mime_type": "text/plain",
-  "description": "ASCII text",
-  "encoding": "us-ascii",
-  "analyzed_at": "2024-02-11T14:30:00Z"
-}
-```
-
-### Error Response (Validation)
-
-```http
-HTTP/1.1 400 Bad Request
-Content-Type: application/json
-X-Request-ID: 550e8400-e29b-41d4-a716-446655440000
-
-{
-  "error": {
-    "code": "validation_error",
-    "message": "Invalid filename: Filename too long (311, max 310)",
-    "request_id": "550e8400-e29b-41d4-a716-446655440000"
-  }
-}
-```
-
-### Error Response (Not Found)
-
-```http
-HTTP/1.1 404 Not Found
-Content-Type: application/json
-X-Request-ID: 550e8400-e29b-41d4-a716-446655440000
-
-{
-  "error": {
-    "code": "not_found",
-    "message": "File not found: documents/report.pdf",
-    "request_id": "550e8400-e29b-41d4-a716-446655440000"
-  }
-}
-```
-
-### Error Response (Authentication)
-
-```http
-HTTP/1.1 401 Unauthorized
-Content-Type: application/json
-WWW-Authenticate: Basic realm="magicer"
-
-{
-  "error": {
-    "code": "authentication_required",
-    "message": "Authentication required"
-  }
-}
-```
-
-## Testing
-
-```rust
-#[tokio::test]
-async fn test_success_response_serialization() {
-    let response = MagicResponse {
-        request_id: RequestId::new(),
-        mime_type: MimeType::new("text/plain").unwrap(),
-        description: "ASCII text".to_string(),
-        encoding: Some("utf-8".to_string()),
-        analyzed_at: Utc::now(),
-    };
-    
-    let json = serde_json::to_string(&response).unwrap();
-    
-    assert!(json.contains("\"mime_type\":\"text/plain\""));
-    assert!(json.contains("\"description\":\"ASCII text\""));
-    assert!(json.contains("\"encoding\":\"utf-8\""));
-}
-
-#[tokio::test]
-async fn test_error_response_serialization() {
-    let error = ErrorResponse::new(
-        "validation_error",
-        "Invalid input"
-    );
-    
-    let json = serde_json::to_string(&error).unwrap();
-    
-    assert!(json.contains("\"code\":\"validation_error\""));
-    assert!(json.contains("\"message\":\"Invalid input\""));
-}
-```
+The system uses an automated serialization process to transform internal data structures into HTTP responses:
+1. **Success Mapping**: Domain entities are converted into response DTOs, where optional fields like encoding are omitted if they are not present.
+2. **Error Mapping**: Application-level errors are matched to specific status codes and machine-readable error codes.
+3. **Format Enforcement**: All responses are delivered as JSON with UTF-8 encoding.
+4. **Consistency**: The inclusion of a request ID in every response enables end-to-end tracing from the client to the backend logs.
 
 ## Design Rationale
 

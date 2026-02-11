@@ -84,140 +84,44 @@ Main server settings for network binding and connection management.
 #### `server.host`
 
 **Type:** String  
-**Default:** `"0.0.0.0"`  
+**Default:** "0.0.0.0"  
 **Environment:** `MAGICER_HOST`  
-**Description:** IP address to bind the HTTP server.
-
-**Valid Values:**
-- `"0.0.0.0"` - Bind to all network interfaces
-- `"127.0.0.1"` - Localhost only
-- Any valid IPv4 address
-
-**Example:**
-```toml
-[server]
-host = "0.0.0.0"
-```
+**Description:** IP address to bind the HTTP server. Typical values are "0.0.0.0" to bind to all interfaces or "127.0.0.1" for local access only.
 
 #### `server.port`
 
-**Type:** Unsigned integer (u16)  
-**Default:** `8080`  
+**Type:** Unsigned 16-bit integer  
+**Default:** 8080  
 **Environment:** `MAGICER_PORT`  
-**Description:** TCP port number for HTTP server.
-
-**Valid Range:** 1 - 65535  
-**Recommended:** 8080 (development), 80/443 (production with reverse proxy)
-
-**Example:**
-```toml
-[server]
-port = 8080
-```
+**Description:** TCP port number for the HTTP server. Valid range is 1 to 65535.
 
 #### `server.max_connections`
 
-**Type:** Unsigned integer (usize)  
-**Default:** `1000`  
-**Description:** Maximum number of concurrent active TCP connections.
-
-**Valid Range:** 1 - 10000  
-**Note:** Connections exceeding this limit enter the backlog queue.
-
-**Example:**
-```toml
-[server]
-max_connections = 1000
-```
+**Type:** Unsigned integer  
+**Default:** 1000  
+**Description:** Maximum number of concurrent active TCP connections. Connections exceeding this limit enter the backlog queue.
 
 #### `server.backlog`
 
-**Type:** Unsigned integer (u32)  
-**Default:** `1024`  
+**Type:** Unsigned 32-bit integer  
+**Default:** 1024  
 **Description:** OS-level TCP listen queue size for pending connections.
-
-**Valid Range:** 1 - 65535  
-**Note:** Connections exceeding backlog are refused by the OS.
-
-**Example:**
-```toml
-[server]
-backlog = 1024
-```
 
 #### `server.max_open_files`
 
-**Type:** Unsigned integer (usize)  
-**Default:** `4096`  
+**Type:** Unsigned integer  
+**Default:** 4096  
 **Environment:** `MAGICER_MAX_OPEN_FILES`  
-**Description:** Maximum number of file descriptors (FDs) the server process can have open simultaneously.
-
-**Valid Range:** 1024 - 65536  
-**Recommended:** 4096 (production), matches common `ulimit -n` defaults
-
-**Purpose:**
-
-Prevent file descriptor exhaustion by:
-- Setting application-level limit
-- Enabling graceful degradation (503 errors instead of crashes)
-- Providing visibility into FD usage
+**Description:** Maximum number of file descriptors the server process can have open simultaneously. This setting helps prevent file descriptor exhaustion by enabling an application-level limit.
 
 **File Descriptor Usage Breakdown:**
+Every request typically consumes one socket descriptor. Large file analysis may consume an additional file descriptor for the temporary file. The total limit should also account for system overhead such as log handles and configuration files.
 
-| Resource | FDs per Request | Max Concurrent | Estimated FDs |
-|----------|----------------|----------------|---------------|
-| **TCP Socket** | 1 | 1000 | 1000 |
-| **Temp File** | 0-1 | ~500 (50% large) | 500 |
-| **Mmap** | 0-1 (included in temp) | ~500 | 0 (reuses FD) |
-| **System Files** | - | - | ~100 (stdout, logs, etc.) |
-| **Total** | - | - | **~1600** |
+**System Configuration Requirements:**
+This value must be less than or equal to the system-level limit. On Linux, current limits can be inspected and modified using the standard `ulimit` command or by configuring the security limits file.
 
-**Calculation for Your Environment:**
-
-```
-Required FDs = (max_connections × socket_multiplier) + 
-               (large_file_percentage × max_connections) + 
-               system_overhead
-
-Example:
-= (1000 × 1) + (0.5 × 1000) + 100
-= 1000 + 500 + 100
-= 1600 FDs minimum
-```
-
-**Recommended Values:**
-
-| Environment | max_connections | Recommended max_open_files | Reasoning |
-|-------------|----------------|---------------------------|-----------|
-| Development | 100 | 1024 | Minimal testing |
-| Production (low) | 1000 | 4096 | 2.5x safety margin |
-| Production (high) | 2000 | 8192 | 2x safety margin for 2000 connections |
-| Testing | 10 | 256 | Rapid cycles |
-
-**Safety Margin:**
-
-Always set `max_open_files >= 2 × estimated_fd_usage` to account for:
-- Concurrent request spikes
-- Background cleanup tasks
-- Logging file handles
-- Library internal usage
-
-**System Limit Check:**
-
-This setting must be ≤ system ulimit:
-
-```bash
-# Check system limit
-ulimit -n
-# Output: 1024 (default on many systems)
-
-# Increase system limit (temporary)
-ulimit -n 4096
-
-# Increase system limit (permanent) - add to /etc/security/limits.conf
-* soft nofile 4096
-* hard nofile 65536
-```
+**Handling Limit Exhaustion:**
+When the limit is reached, the server rejects new connections with a 503 Service Unavailable status. If a temporary file cannot be created due to resource exhaustion, it results in a 500 Internal Server Error.
 
 **Behavior:**
 
@@ -344,67 +248,31 @@ Timeout values controlling request/response lifecycle.
 
 #### `server.timeouts.read_timeout_secs`
 
-**Type:** Unsigned integer (u64)  
-**Default:** `60`  
+**Type:** Unsigned 64-bit integer  
+**Default:** 60  
 **Unit:** Seconds  
-**Description:** Maximum time to receive complete HTTP request (headers + body).
-
-**Valid Range:** 1 - 600  
-**Purpose:** Prevent slow-read DoS attacks.
-
-**Example:**
-```toml
-[server.timeouts]
-read_timeout_secs = 60
-```
+**Description:** Maximum time allowed to receive a complete HTTP request, including headers and body. This helps prevent slow-read denial of service attacks.
 
 #### `server.timeouts.write_timeout_secs`
 
-**Type:** Unsigned integer (u64)  
-**Default:** `60`  
+**Type:** Unsigned 64-bit integer  
+**Default:** 60  
 **Unit:** Seconds  
-**Description:** Maximum time to send complete HTTP response to client.
-
-**Valid Range:** 1 - 600  
-**Purpose:** Prevent slow-send attacks and resource exhaustion.
-
-**Example:**
-```toml
-[server.timeouts]
-write_timeout_secs = 60
-```
+**Description:** Maximum time allowed to transmit the full HTTP response to the client. This protects against slow-send attacks and prevents resource exhaustion.
 
 #### `server.timeouts.analysis_timeout_secs`
 
-**Type:** Unsigned integer (u64)  
-**Default:** `30`  
+**Type:** Unsigned 64-bit integer  
+**Default:** 30  
 **Unit:** Seconds  
-**Description:** Maximum time for libmagic file analysis operation.
-
-**Valid Range:** 1 - 300  
-**Purpose:** Prevent indefinite blocking on complex files.
-
-**Example:**
-```toml
-[server.timeouts]
-analysis_timeout_secs = 30
-```
+**Description:** Maximum time allocated for the libmagic file analysis operation. This prevents the server from blocking indefinitely on complex or malformed files.
 
 #### `server.timeouts.keepalive_secs`
 
-**Type:** Unsigned integer (u64)  
-**Default:** `75`  
+**Type:** Unsigned 64-bit integer  
+**Default:** 75  
 **Unit:** Seconds  
-**Description:** HTTP keep-alive timeout for idle connections.
-
-**Valid Range:** 1 - 600  
-**Purpose:** Balance connection reuse with resource cleanup.
-
-**Example:**
-```toml
-[server.timeouts]
-keepalive_secs = 75
-```
+**Description:** HTTP keep-alive timeout for idle connections. This setting balances the benefits of connection reuse against the cost of maintaining idle resources.
 
 ---
 
@@ -416,51 +284,24 @@ Size constraints for HTTP requests.
 
 #### `server.limits.max_body_size_mb`
 
-**Type:** Unsigned integer (u64)  
-**Default:** `100`  
+**Type:** Unsigned 64-bit integer  
+**Default:** 100  
 **Unit:** Megabytes  
-**Description:** Maximum HTTP request body size.
-
-**Valid Range:** 1 - 1024  
-**Purpose:** Prevent memory exhaustion from large payloads.
-
-**Example:**
-```toml
-[server.limits]
-max_body_size_mb = 100
-```
+**Description:** Maximum allowed size for the HTTP request body. This constraint prevents memory exhaustion and storage overflow from excessively large payloads.
 
 #### `server.limits.max_uri_length`
 
-**Type:** Unsigned integer (usize)  
-**Default:** `8192`  
+**Type:** Unsigned integer  
+**Default:** 8192  
 **Unit:** Bytes  
-**Description:** Maximum URI length including query parameters.
-
-**Valid Range:** 256 - 65536  
-**Purpose:** Prevent buffer overflow attacks.
-
-**Example:**
-```toml
-[server.limits]
-max_uri_length = 8192
-```
+**Description:** Maximum length of the request URI, including all query parameters. This limit protects against certain types of buffer overflow and resource consumption attacks.
 
 #### `server.limits.max_header_size`
 
-**Type:** Unsigned integer (usize)  
-**Default:** `16384`  
+**Type:** Unsigned integer  
+**Default:** 16384  
 **Unit:** Bytes  
-**Description:** Maximum total size of all HTTP request headers.
-
-**Valid Range:** 1024 - 65536  
-**Purpose:** Prevent header-based DoS attacks.
-
-**Example:**
-```toml
-[server.limits]
-max_header_size = 16384
-```
+**Description:** Maximum total size allowed for all HTTP request headers. This helps prevent header-based denial of service attacks.
 
 ---
 
@@ -472,23 +313,10 @@ File system access restrictions for path-based analysis.
 
 #### `sandbox.base_dir`
 
-**Type:** String (absolute path)  
-**Default:** `/var/lib/magicer/files`  
+**Type:** Absolute Path String  
+**Default:** "/var/lib/magicer/files"  
 **Environment:** `MAGICER_SANDBOX_DIR`  
-**Description:** Root directory for all file path operations.
-
-**Requirements:**
-- Must be an absolute path
-- Directory must exist and be readable
-- Server process must have appropriate permissions
-
-**Security:** All relative paths in API requests are resolved within this directory.
-
-**Example:**
-```toml
-[sandbox]
-base_dir = "/var/lib/magicer/files"
-```
+**Description:** The root directory for all path-based file operations. The server process must have read permissions for this directory. For security, all relative paths provided in API requests are resolved strictly within this boundary.
 
 ---
 
@@ -501,39 +329,18 @@ HTTP Basic Authentication settings.
 #### `auth.username`
 
 **Type:** String  
-**Default:** None (required)  
+**Default:** None (Required)  
 **Environment:** `MAGICER_AUTH_USERNAME`  
-**Description:** Username for HTTP Basic Authentication.
-
-**Requirements:**
-- Non-empty string
-- Must match client-provided username
-
-**Example:**
-```toml
-[auth]
-username = "api_user"
-```
+**Description:** The username required for HTTP Basic Authentication on protected endpoints.
 
 #### `auth.password`
 
 **Type:** String  
-**Default:** None (required)  
+**Default:** None (Required)  
 **Environment:** `MAGICER_AUTH_PASSWORD`  
-**Description:** Password for HTTP Basic Authentication.
+**Description:** The password required for HTTP Basic Authentication. Credentials are compared using a constant-time algorithm to prevent timing attacks.
 
-**Requirements:**
-- Non-empty string
-- Stored in plain text (use environment variable in production)
-- Compared using constant-time algorithm
-
-**Security Recommendation:** Use `MAGICER_AUTH_PASSWORD` environment variable instead of storing in TOML file.
-
-**Example:**
-```toml
-[auth]
-password = "secret_password"
-```
+**Security Recommendation**: In production environments, it is strongly recommended to provide the password via the environment variable rather than storing it in the configuration file.
 
 ---
 
@@ -545,443 +352,55 @@ File analysis behavior settings.
 
 #### `analysis.large_file_threshold_mb`
 
-**Type:** Unsigned integer (u64)  
-**Default:** `10`  
+**Type:** Unsigned 64-bit integer  
+**Default:** 10  
 **Unit:** Megabytes  
-**Description:** Size threshold above which content is streamed to temporary file instead of analyzed in memory.
-
-**Valid Range:** 1 - 100  
-**Purpose:** Reduce memory consumption for large file analysis.
-
-**Trade-offs:**
-- **Lower values** - Less memory usage, more disk I/O
-- **Higher values** - More memory usage, less disk I/O
-
-**Example:**
-```toml
-[analysis]
-large_file_threshold_mb = 10
-```
+**Description:** The size threshold at which the server switches from in-memory analysis to file-based streaming and memory-mapped I/O. Lower values reduce memory pressure but increase disk I/O.
 
 #### `analysis.write_buffer_size_kb`
 
-**Type:** Unsigned integer (u64)  
-**Default:** `64`  
+**Type:** Unsigned 64-bit integer  
+**Default:** 64  
 **Unit:** Kilobytes  
-**Description:** Buffer size for streaming content to temporary files.
-
-**Valid Range:** 4 - 1024  
-**Purpose:** Control memory vs I/O performance trade-off when writing temporary files.
-
-**Recommended:**
-- Fast disks (SSD): 64-128 KB
-- Slow disks (HDD): 256-512 KB
-- Network storage: 128-256 KB
-
-**Example:**
-```toml
-[analysis]
-write_buffer_size_kb = 64
-```
+**Description:** The size of the buffer used when streaming request content to temporary files. Optimal values vary based on the storage medium (e.g., SSD vs. HDD).
 
 #### `analysis.temp_dir`
 
-**Type:** String (absolute path)  
-**Default:** `/tmp/magicer`  
-**Description:** Directory for temporary files during large content analysis.
-
-**Requirements:**
-- Must be an absolute path
-- Directory must exist or be creatable
-- Server process must have write permissions
-- Should be on a filesystem with sufficient space
-
-**Recommendations:**
-- Use tmpfs for performance (if sufficient RAM)
-- Ensure at least 10GB free space for production
-- Separate from main data directories
-
-**Example:**
-```toml
-[analysis]
-temp_dir = "/tmp/magicer"
-```
+**Type:** Absolute Path String  
+**Default:** "/tmp/magicer"  
+**Description:** The directory where temporary files are stored during large content analysis. The server must have write permissions for this directory. Using a memory-based filesystem (tmpfs) can significantly improve performance.
 
 #### `analysis.min_free_space_mb`
 
-**Type:** Unsigned integer (u64)  
-**Default:** `1024`  
+**Type:** Unsigned 64-bit integer  
+**Default:** 1024  
 **Unit:** Megabytes  
 **Environment:** `MAGICER_MIN_FREE_SPACE_MB`  
-**Description:** Minimum free disk space required in temp directory before accepting large file analysis requests.
+**Description:** Minimum free disk space required in the temporary directory before accepting large analysis requests.
 
-**Valid Range:** 100 - 102400 (100MB - 100GB)  
-**Recommended:** 1024 MB (1 GB) for production
-
-**Purpose:**
-
-Pre-flight disk space check to prevent:
-- Disk exhaustion during file streaming
-- Partial file writes that fail mid-operation
-- System-wide storage issues
-- Cascading failures from full disk
-
-**Behavior:**
-
-1. **Pre-flight Check:** Before creating temp file, server checks available space in temp directory
-2. **Threshold Comparison:** If `available_space < min_free_space_mb`, request is rejected immediately
-3. **Error Response:** Client receives `507 Insufficient Storage` with clear error message
-4. **No Temp File Created:** Prevents wasting I/O on doomed operations
-
-**Space Calculation:**
-
-Uses `statvfs()` system call to determine:
-- Available space = `f_bavail * f_frsize` (available to non-root)
-- Converts to MB for threshold comparison
-- Additional check: `available >= (content_size + threshold)` for safety margin
-
-**Error Messages:**
-
-Pre-flight check failure:
-```json
-{
-  "error": "Insufficient storage space for analysis",
-  "details": "Temp directory has 512MB available, but 1024MB minimum required",
-  "request_id": "abc-123"
-}
-```
-
-Disk full during write:
-```json
-{
-  "error": "Disk space exhausted during file processing",
-  "details": "Failed to write chunk at offset 52428800: No space left on device",
-  "request_id": "abc-123"
-}
-```
-
-**Sizing Guidance:**
-
-| Environment | Recommended Value | Reasoning |
-|-------------|------------------|-----------|
-| Development | 512 MB | Lower threshold for testing |
-| Production (low traffic) | 1024 MB (1 GB) | Safety margin for 10 concurrent 100MB files |
-| Production (high traffic) | 5120 MB (5 GB) | Buffer for hundreds of concurrent requests |
-| Network storage | 2048 MB (2 GB) | Account for delayed sync/flush |
-
-**Trade-offs:**
-
-- **Lower threshold:**
-  - Accepts more requests when space is tight
-  - Higher risk of mid-operation failures
-  - More partial file cleanup overhead
-
-- **Higher threshold:**
-  - More conservative rejection policy
-  - Better protection against disk exhaustion
-  - May reject valid requests unnecessarily
-
-**Storage Planning:**
-
-For production deployment, ensure temp filesystem has:
-- `min_free_space_mb` × 2 (safety margin)
-- Plus expected concurrent requests × max file size
-- Example: `1024MB × 2 + (100 concurrent × 100MB) = 12GB minimum`
-
-**Monitoring:**
-
-Key metrics:
-- `disk_space_check_failures_total` - Pre-flight rejections
-- `temp_dir_available_space_mb` - Current available space (gauge)
-- `disk_space_write_failures_total` - Failures during streaming
-
-**Related Settings:**
-
-- `server.limits.max_body_size_mb` - Maximum request size (100MB)
-- `analysis.large_file_threshold_mb` - When temp files are used (10MB)
-- `analysis.temp_dir` - Location of temp files
-
-**Validation:**
-
-Startup checks:
-- Value is positive integer
-- Value >= 100 MB (sanity check)
-- Temp directory is accessible
-- Initial available space >= threshold (warning if not)
-
-**Example:**
-
-Minimal (development):
-```toml
-[analysis]
-min_free_space_mb = 512
-```
-
-Standard (production):
-```toml
-[analysis]
-min_free_space_mb = 1024
-```
-
-High traffic (production):
-```toml
-[analysis]
-min_free_space_mb = 5120
-```
+**Pre-flight Logic:**
+Before starting a large file analysis, the server checks the available space in the temporary directory using system calls (e.g., `statvfs`). If the available space is less than this threshold, the request is rejected immediately with a 507 Insufficient Storage status. This prevents disk exhaustion and partial writes that would inevitably fail.
 
 #### `analysis.temp_file_max_age_secs`
 
-**Type:** Unsigned integer (u64)  
-**Default:** `3600` (1 hour)  
+**Type:** Unsigned 64-bit integer  
+**Default:** 3600 (1 hour)  
 **Unit:** Seconds  
 **Environment:** `MAGICER_TEMP_FILE_MAX_AGE_SECS`  
-**Description:** Maximum age for temporary files before considered orphaned and eligible for cleanup.
-
-**Valid Range:** 300 - 86400 (5 minutes - 24 hours)  
-**Recommended:** 3600 seconds (1 hour) for production
-
-**Purpose:**
-
-Automatic cleanup of orphaned temporary files that remain after:
-- Server crashes (SIGKILL, power loss)
-- Panics during analysis
-- Ungraceful shutdowns
-- Failed cleanup operations
-
-**Behavior:**
-
-1. **Background Cleanup Task:** Runs every 5 minutes
-2. **Age Check:** Files older than threshold are deleted
-3. **Safety Margin:** Default 1 hour provides buffer for long-running analysis
-4. **Startup Cleanup:** Server scans temp directory on startup and removes old files
-
-**How Age is Calculated:**
-
-```
-age = current_time - file_creation_time (mtime)
-if age > temp_file_max_age_secs:
-    delete_file()
-```
-
-**Use Cases:**
-
-| Scenario | File Age | Action |
-|----------|----------|--------|
-| Normal operation | < 1 min | Active, not cleaned |
-| Long analysis (valid) | 30 min | Active, not cleaned |
-| Server crash orphan | 2 hours | Cleaned by background task |
-| Startup orphan | 5 hours | Cleaned at startup |
-
-**Sizing Guidance:**
-
-| Environment | Recommended Value | Reasoning |
-|-------------|------------------|-----------|
-| Development | 600 (10 minutes) | Fast cleanup for testing |
-| Production (fast) | 3600 (1 hour) | Default, safe for typical workloads |
-| Production (slow) | 7200 (2 hours) | Large files with slow disk |
-| Testing | 300 (5 minutes) | Minimal for test cycles |
-
-**Trade-offs:**
-
-- **Lower threshold:**
-  - Faster cleanup of orphaned files
-  - Less disk space wasted
-  - Risk: May delete files from slow operations
-
-- **Higher threshold:**
-  - More safety margin for legitimate operations
-  - More disk space temporarily used
-  - Slower cleanup of true orphans
+**Description:** The maximum age for temporary files before they are considered orphaned and eligible for automatic cleanup.
 
 **Cleanup Process:**
-
-```mermaid
-stateDiagram-v2
-    [*] --> Scan: Background task (5 min)
-    Scan --> Check: For each file
-    Check --> Age{Age check}
-    Age -->|< threshold| Skip: Keep file
-    Age -->|> threshold| Delete: Remove file
-    Delete --> Log: Log deletion
-    Skip --> Next: Next file
-    Log --> Next
-    Next --> Check: More files?
-    Next --> [*]: Complete
-```
-
-**Monitoring:**
-
-Metrics to track:
-- `orphaned_files_cleaned_total` - Counter for cleaned files
-- `orphaned_files_found` - Gauge for files found during scan
-- `cleanup_task_duration_seconds` - Histogram for cleanup time
-
-**Related Settings:**
-
-- `analysis.temp_dir` - Location of temporary files to scan
-- `server.timeouts.analysis_timeout_secs` - Maximum legitimate file age during analysis
-
-**Validation:**
-
-Startup checks:
-- Value is positive integer
-- Value >= 300 seconds (minimum 5 minutes)
-- Warning if value < analysis timeout (files could be prematurely deleted)
-
-**Example:**
-
-Standard (production):
-```toml
-[analysis]
-temp_file_max_age_secs = 3600  # 1 hour
-```
-
-Conservative (slow storage):
-```toml
-[analysis]
-temp_file_max_age_secs = 7200  # 2 hours
-```
-
-Aggressive (testing):
-```toml
-[analysis]
-temp_file_max_age_secs = 300  # 5 minutes
-```
+A background task scans the temporary directory periodically (every 5 minutes) and removes files older than this threshold. This handles orphaned files resulting from server crashes or ungraceful shutdowns. A similar cleanup process also occurs during server startup.
 
 #### `analysis.mmap_fallback_enabled`
 
 **Type:** Boolean  
-**Default:** `true`  
+**Default:** true  
 **Environment:** `MAGICER_MMAP_FALLBACK_ENABLED`  
-**Description:** Enable fallback to buffer-based analysis if memory mapping fails.
+**Description:** Whether to allow falling back to traditional buffer-based analysis if memory-mapping the temporary file fails.
 
-**Purpose:**
-
-Improve availability by gracefully degrading when mmap operations fail due to:
-- Resource limits (max memory maps exceeded)
-- File system limitations (network mounts)
-- Platform-specific issues
-- Kernel restrictions
-
-**Behavior:**
-
-1. **Mmap Attempt:** Try to memory map temp file
-2. **On Failure:** If `mmap_fallback_enabled = true`, read file into buffer
-3. **Analysis:** Proceed with buffer-based analysis
-4. **On Success:** Return result (client unaware of fallback)
-
-**Flow Diagram:**
-
-```mermaid
-graph TB
-    Large[Large File] --> Temp[Write to Temp]
-    Temp --> Mmap[Try Mmap]
-    
-    Mmap --> Success{Mmap OK?}
-    Success -->|Yes| Analyze1[Analyze via Mmap]
-    Success -->|No| Fallback{Fallback Enabled?}
-    
-    Fallback -->|Yes| Buffer[Read to Buffer]
-    Fallback -->|No| Error[Return Error]
-    
-    Buffer --> Analyze2[Analyze via Buffer]
-    
-    Analyze1 --> Result[Return Result]
-    Analyze2 --> Result
-    Error --> Client[507/500 Error]
-    
-    style Buffer fill:#fff4e1
-    style Analyze2 fill:#e1ffe1
-    style Error fill:#ffe1e1
-```
-
-**Trade-offs:**
-
-| Aspect | Enabled (true) | Disabled (false) |
-|--------|---------------|------------------|
-| **Availability** | Higher (graceful degradation) | Lower (fails on mmap error) |
-| **Memory Usage** | Spikes to 100MB on fallback | Constant low usage |
-| **Performance** | Slower on fallback | Consistent (fast or fail) |
-| **Debugging** | Masks mmap issues | Exposes mmap issues immediately |
-
-**When to Enable (true):**
-
-- Production environments prioritizing availability
-- Network-mounted temp directories
-- Systems with unpredictable mmap limits
-- When monitoring detects occasional mmap failures
-
-**When to Disable (false):**
-
-- Testing/development to catch mmap issues
-- Systems with strict memory limits
-- When mmap failures indicate misconfiguration
-- Performance-critical deployments
-
-**Error Handling:**
-
-With fallback **enabled**:
-```
-1. Mmap fails → Log warning
-2. Read to buffer → Log info "Using fallback"
-3. Analyze buffer → Success
-4. Metric: mmap_fallback_used_total++
-```
-
-With fallback **disabled**:
-```
-1. Mmap fails → Return error immediately
-2. Client receives: 500 Internal Server Error
-3. Log error: "Failed to memory map file: {cause}"
-4. Metric: mmap_failures_total++
-```
-
-**Performance Impact:**
-
-Fallback scenario (100MB file):
-- Mmap approach: ~10ms + 100ms analysis = 110ms
-- Fallback approach: ~500ms (read) + 100ms analysis = 600ms
-- **5x slower** but completes successfully
-
-**Monitoring:**
-
-Required metrics when enabled:
-- `mmap_fallback_used_total` - Counter for fallback usage
-- `mmap_failures_total` - Counter for mmap failures
-- `buffer_analysis_duration_seconds` - Histogram for fallback performance
-
-**Alerts:**
-
-If fallback used frequently:
-- Alert: "Mmap fallback rate > 1% of requests"
-- Action: Investigate mmap failures, tune limits
-- Root cause: Resource limits, filesystem issues
-
-**Related Settings:**
-
-- `analysis.large_file_threshold_mb` - When mmap is attempted
-- `server.limits.max_body_size_mb` - Maximum buffer size
-- System: `ulimit -v` (virtual memory limit)
-
-**Validation:**
-
-- Boolean value (true/false)
-- No range validation needed
-- Warning if disabled in production
-
-**Example:**
-
-Production (availability first):
-```toml
-[analysis]
-mmap_fallback_enabled = true
-```
-
-Development (fail fast):
-```toml
-[analysis]
-mmap_fallback_enabled = false
-```
+**Availability and Performance:**
+When enabled, the server will attempt to read the entire file into memory if `mmap` fails due to system limits or filesystem constraints. This improves overall availability at the cost of a temporary memory spike. If disabled, the server will return a 500 or 507 error immediately upon `mmap` failure.
 
 ---
 
@@ -993,22 +412,9 @@ libmagic library settings.
 
 #### `magic.database_path`
 
-**Type:** String (optional, absolute path)  
-**Default:** System default (`/usr/share/misc/magic.mgc`)  
-**Description:** Path to custom magic database file.
-
-**When to Use:**
-- Custom file type detection rules
-- Alternative magic database
-- Testing with modified rules
-
-**If Not Set:** Uses system-provided magic database.
-
-**Example:**
-```toml
-[magic]
-database_path = "/usr/local/share/magic/custom.mgc"
-```
+**Type:** Optional Absolute Path String  
+**Default:** System default (typically "/usr/share/misc/magic.mgc")  
+**Description:** Path to a custom magic database file. If omitted, the server uses the default database provided by the system's `libmagic` installation. This is useful for providing custom file detection rules or using a more recent database version.
 
 ---
 
@@ -1021,232 +427,48 @@ Logging behavior and output format.
 #### `logging.level`
 
 **Type:** String  
-**Default:** `"info"`  
+**Default:** "info"  
 **Environment:** `RUST_LOG`  
-**Description:** Logging verbosity level.
-
-**Valid Values:**
-- `"error"` - Errors only
-- `"warn"` - Warnings and errors
-- `"info"` - Informational messages (default)
-- `"debug"` - Debug information
-- `"trace"` - Verbose trace logging
-
-**Example:**
-```toml
-[logging]
-level = "info"
-```
-
-**Advanced Filtering (via RUST_LOG):**
-```bash
-export RUST_LOG="magicer=debug,tower_http=info,hyper=warn"
-```
+**Description:** The verbosity level for system logs. Valid values include "error", "warn", "info", "debug", and "trace". Advanced filtering can also be applied through the environment variable to set different levels for specific modules or external libraries.
 
 #### `logging.format`
 
 **Type:** String  
-**Default:** `"json"`  
+**Default:** "json"  
 **Environment:** `MAGICER_LOG_FORMAT`  
-**Description:** Log output format.
-
-**Valid Values:**
-- `"json"` - Structured JSON (production)
-- `"pretty"` - Human-readable (development)
-- `"compact"` - Minimal console output
-
-**Example:**
-```toml
-[logging]
-format = "json"
-```
+**Description:** The output format for logs. Standard options include "json" for structured production logging, "pretty" for human-readable development output, and "compact" for minimal console messaging.
 
 ---
 
-## Complete Configuration Example
+## Configuration Deployment Scenarios
 
-### Minimal Configuration
+### Development Environment
+For local development, the server is typically configured to bind to localhost with human-readable "pretty" logging. Resource limits are kept low, and fast cleanup of temporary files is enabled to facilitate rapid testing cycles. Fallback mechanisms are often disabled to ensure any system misconfigurations are caught immediately.
 
-```toml
-[server]
-host = "0.0.0.0"
-port = 8080
-
-[sandbox]
-base_dir = "/var/lib/magicer/files"
-
-[auth]
-username = "api_user"
-# Use MAGICER_AUTH_PASSWORD environment variable
-```
-
-### Full Configuration with All Options
-
-```toml
-[server]
-host = "0.0.0.0"
-port = 8080
-max_connections = 1000
-backlog = 1024
-max_open_files = 4096
-
-[server.timeouts]
-read_timeout_secs = 60
-write_timeout_secs = 60
-analysis_timeout_secs = 30
-keepalive_secs = 75
-
-[server.limits]
-max_body_size_mb = 100
-max_uri_length = 8192
-max_header_size = 16384
-
-[analysis]
-large_file_threshold_mb = 10
-write_buffer_size_kb = 64
-temp_dir = "/tmp/magicer"
-min_free_space_mb = 1024
-temp_file_max_age_secs = 3600
-mmap_fallback_enabled = true
-
-[sandbox]
-base_dir = "/var/lib/magicer/files"
-
-[auth]
-username = "api_user"
-password = "secret_password"  # Use env var in production
-
-[magic]
-database_path = "/usr/share/misc/magic.mgc"
-
-[logging]
-level = "info"
-format = "json"
-```
-
-### Development Configuration
-
-```toml
-[server]
-host = "127.0.0.1"
-port = 8080
-max_connections = 100
-max_open_files = 1024
-
-[server.timeouts]
-read_timeout_secs = 120
-analysis_timeout_secs = 60
-
-[analysis]
-large_file_threshold_mb = 5  # Lower threshold for testing
-write_buffer_size_kb = 32
-temp_dir = "./tmp"
-min_free_space_mb = 512  # Lower for dev environment
-temp_file_max_age_secs = 600  # 10 minutes for faster cleanup
-mmap_fallback_enabled = false  # Fail fast in development
-
-[sandbox]
-base_dir = "./test-files"
-
-[auth]
-username = "dev"
-password = "dev"
-
-[logging]
-level = "debug"
-format = "pretty"
-```
-
-### Production Configuration
-
-```toml
-[server]
-host = "0.0.0.0"
-port = 8080
-max_connections = 2000
-backlog = 2048
-max_open_files = 8192
-
-[server.timeouts]
-read_timeout_secs = 30
-write_timeout_secs = 30
-analysis_timeout_secs = 20
-keepalive_secs = 60
-
-[server.limits]
-max_body_size_mb = 100
-
-[analysis]
-large_file_threshold_mb = 10
-write_buffer_size_kb = 128  # Optimized for SSD
-temp_dir = "/var/tmp/magicer"
-min_free_space_mb = 5120  # 5GB for high traffic
-temp_file_max_age_secs = 3600  # 1 hour
-mmap_fallback_enabled = true  # High availability
-
-[sandbox]
-base_dir = "/srv/magicer/files"
-
-[auth]
-username = "api_production"
-# Password from MAGICER_AUTH_PASSWORD environment variable
-
-[logging]
-level = "info"
-format = "json"
-```
+### Production Environment
+In production, the server binds to all interfaces and uses structured JSON logging for integration with centralized logging systems. Resource limits like max connections and file descriptors are tuned for high performance. Timeouts are set more aggressively, and memory-mapped fallback is enabled to maximize service availability.
 
 ---
 
 ## Environment Variable Reference
 
-Complete mapping of environment variables to configuration keys.
-
-| Environment Variable | Configuration Key | Type | Default |
-|---------------------|------------------|------|---------|
-| `MAGICER_CONFIG_PATH` | N/A (file location) | String | `./config/config.toml` or `/etc/magicer/config.toml` |
-| `MAGICER_HOST` | `server.host` | String | `"0.0.0.0"` |
-| `MAGICER_PORT` | `server.port` | u16 | `8080` |
-| `MAGICER_MAX_OPEN_FILES` | `server.max_open_files` | usize | `4096` |
-| `MAGICER_SANDBOX_DIR` | `sandbox.base_dir` | String | `/var/lib/magicer/files` |
-| `MAGICER_AUTH_USERNAME` | `auth.username` | String | None (required) |
-| `MAGICER_AUTH_PASSWORD` | `auth.password` | String | None (required) |
-| `MAGICER_MIN_FREE_SPACE_MB` | `analysis.min_free_space_mb` | u64 | `1024` |
-| `MAGICER_TEMP_FILE_MAX_AGE_SECS` | `analysis.temp_file_max_age_secs` | u64 | `3600` |
-| `MAGICER_MMAP_FALLBACK_ENABLED` | `analysis.mmap_fallback_enabled` | bool | `true` |
-| `MAGICER_LOG_FORMAT` | `logging.format` | String | `"json"` |
-| `RUST_LOG` | `logging.level` | String | `"info"` |
-
----
+The server supports overriding any configuration setting through environment variables. These variables follow a standard naming convention, typically prefixed with `MAGICER_`. For example, `MAGICER_PORT` overrides the server port, and `MAGICER_SANDBOX_DIR` sets the sandbox root directory. A complete list of supported variables can be found in the system's environment mapping documentation.
 
 ## Configuration Validation
 
-The server validates configuration on startup:
+The server performs a comprehensive validation check during the startup sequence. This ensures that:
+- **Critical Settings**: Authentication credentials and the sandbox directory are provided and valid.
+- **System Integrity**: Port numbers are in the allowed range, and all specified paths are absolute and accessible.
+- **Limit Constraints**: All timeout and size constraints are positive and within functional bounds.
 
-**Required Fields:**
-- `auth.username` (or `MAGICER_AUTH_USERNAME`)
-- `auth.password` (or `MAGICER_AUTH_PASSWORD`)
-- `sandbox.base_dir` must exist as a directory
-
-**Validation Checks:**
-- Port number in valid range (1-65535)
-- Timeout values > 0
-- Size limits > 0
-- Paths must be absolute and accessible
-
-**Startup Failure:**
-If configuration is invalid, the server exits with an error message indicating the problem.
-
----
+If any validation check fails, the server exits immediately with a descriptive error message, preventing it from running in an insecure or non-functional state.
 
 ## Security Best Practices
 
-1. **Never commit credentials** - Use environment variables for `auth.password`
-2. **Restrict file permissions** - Set `config.toml` to mode 0600 (owner read/write only)
-3. **Use absolute paths** - Always use absolute paths for `sandbox.base_dir`
-4. **Validate sandbox** - Ensure sandbox directory exists before starting server
-5. **Monitor timeouts** - Adjust timeouts based on actual file analysis performance
-6. **Limit connections** - Set `max_connections` based on available system resources
+1. **Secret Management**: Never store production passwords in the configuration file. Use environment variables or a secure secrets manager.
+2. **File Permissions**: Ensure the configuration file itself has restricted permissions (read-only for the service user).
+3. **Sandbox Isolation**: Always use absolute paths for the sandbox directory and ensure it is properly isolated from sensitive system files.
+4. **Monitoring**: Regularly review log verbosity and timeout settings based on observed traffic patterns.
 
 ---
 

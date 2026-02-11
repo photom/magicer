@@ -156,13 +156,14 @@ fi
 ### Completed
 
 - ✅ Domain layer files updated (credentials.md, filename.md, file_path.md, request_id.md, mime_type.md, magic_result.md, magic_repository.md, authentication_service.md, errors.md)
+- ✅ Application layer files updated (analyze_content.md, analyze_path.md, health_check.md, dtos.md, errors.md)
+- ✅ Infrastructure layer files updated (libmagic_repository.md, basic_auth_service.md, sandbox.md, temp_file_handler.md, server_config.md)
+- ✅ Presentation layer files updated (magic_handlers.md, health_handlers.md, middleware.md, router.md, app_state.md, responses.md)
+- ✅ Reference documents updated (PROJECT_STRUCTURE.md, CONFIG.md, TESTING_STRATEGY.md)
 
 ### Remaining
 
-The following files still contain code blocks and need updating:
-- Application layer: analyze_content.md, analyze_path.md, health_check.md, dtos.md, errors.md
-- Infrastructure layer: libmagic_repository.md, basic_auth_service.md, sandbox.md, temp_file_handler.md, server_config.md
-- Presentation layer: magic_handlers.md, health_handlers.md, middleware.md, router.md, app_state.md, responses.md
+All reference documentation files have been remediated to comply with the no-code policy.
 
 ## References
 

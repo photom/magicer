@@ -175,96 +175,35 @@ graph TD
     style Unprocessable fill:#FFB6C1
 ```
 
-## Usage Example
+## Usage Scenario
 
-```rust
-// Dependency injection
-let repository = Arc::new(LibmagicRepository::new()?);
-let sandbox = PathSandbox::new("/var/data/uploads")?;
-let use_case = AnalyzePathUseCase::new(repository, sandbox);
+### Initialization
 
-// Execute use case
-let request = AnalyzePathRequest {
-    relative_path: RelativePath::new("documents/report.pdf")?,
-};
+The AnalyzePathUseCase is initialized with two primary dependencies: a MagicRepository implementation for the actual file analysis and a PathSandbox for enforcing security boundaries. These dependencies are typically injected as thread-safe atomic reference counters.
 
-let response = use_case.execute(request)?;
-println!("MIME Type: {}", response.mime_type.as_str());
+### Execution Pattern
 
-// Error handling
-match use_case.execute(request) {
-    Ok(response) => {
-        // Success - return HTTP 200
-        Json(response)
-    },
-    Err(ApplicationError::BadRequest(msg)) => {
-        // Invalid path - return HTTP 400
-        (StatusCode::BAD_REQUEST, msg)
-    },
-    Err(ApplicationError::Forbidden(msg)) => {
-        // Path traversal attempt - return HTTP 403
-        (StatusCode::FORBIDDEN, msg)
-    },
-    Err(ApplicationError::NotFound(msg)) => {
-        // File not found - return HTTP 404
-        (StatusCode::NOT_FOUND, msg)
-    },
-    Err(ApplicationError::UnprocessableEntity(msg)) => {
-        // Analysis failed - return HTTP 422
-        (StatusCode::UNPROCESSABLE_ENTITY, msg)
-    },
-    Err(_) => {
-        // Internal error - return HTTP 500
-        (StatusCode::INTERNAL_SERVER_ERROR, "Internal error")
-    },
-}
-```
+To analyze a file by path, a request is constructed containing a RelativePath value object. The execute method first resolves this relative path to an absolute path within the sandbox. If resolution succeeds and the file exists, the use case calls the repository to analyze the file and returns a response.
 
-## Security Checks
+### Response and Error Handling
 
-```mermaid
-graph TD
-    Request[AnalyzePathRequest] --> Check1[Check: Relative path only]
-    Check1 --> Check2[Check: No '..' components]
-    Check2 --> Check3[Check: Resolve to absolute]
-    Check3 --> Check4[Check: Within sandbox root]
-    Check4 --> Check5[Check: Symlinks resolve within sandbox]
-    Check5 --> Check6[Check: File exists]
-    Check6 --> Check7[Check: File is readable]
-    Check7 --> Safe[Safe to analyze]
-    
-    Check1 -->|Fail| Reject[Reject request]
-    Check2 -->|Fail| Reject
-    Check3 -->|Fail| Reject
-    Check4 -->|Fail| Reject
-    Check5 -->|Fail| Reject
-    Check6 -->|Fail| NotFound[File not found]
-    Check7 -->|Fail| Forbidden[Permission denied]
-    
-    style Safe fill:#90EE90
-    style Reject fill:#FFB6C1
-    style NotFound fill:#FFB6C1
-    style Forbidden fill:#FFB6C1
-```
+Successful execution results in a MagicResponse containing the file type details. If the path traversal attempt is detected, it returns Forbidden. If the file does not exist, it returns NotFound. Other input errors result in BadRequest, and analysis failures return UnprocessableEntity.
 
-## Path Traversal Attack Prevention
+## Security Validation Process
 
-```
-Attack: ../../etc/passwd
-Result: Rejected (ParentTraversal in RelativePath validation)
+The use case coordinates a multi-step security validation process:
+1. **Initial Validation**: The RelativePath object ensures the input doesn't contain forbidden sequences like parent directory references.
+2. **Path Resolution**: The sandbox resolves the path, ensuring it stays within the configured root and doesn't escape via symlinks.
+3. **Existence Verification**: Confirms the file exists before attempting analysis.
+4. **Boundary Check**: Final verification that the canonicalized path remains within the sandbox.
 
-Attack: docs/../../../etc/passwd
-Result: Rejected (ParentTraversal detected)
+## Testing Strategy
 
-Attack: /etc/passwd
-Result: Rejected (AbsolutePath in RelativePath validation)
-
-Attack: docs/symlink-to-etc (where symlink -> /etc)
-Result: Rejected (Symlink resolves outside sandbox)
-
-Valid: docs/report.pdf
-Result: Accepted (within sandbox, no traversal)
-```
+Testing the path-based analysis involves several scenarios:
+- **Success Path**: Verification that valid files within the sandbox are correctly analyzed.
+- **Symlink Protection**: Ensuring symlinks pointing outside the sandbox are rejected.
+- **Traversal Prevention**: Confirming that attempts to use '..' or absolute paths are blocked at the entry point.
+- **Missing Resources**: Verifying that 404 errors are returned for files that do not exist.
 
 ## Dependencies
 
