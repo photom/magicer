@@ -9,6 +9,13 @@ impl RequestId {
         Self(Uuid::new_v4().to_string())
     }
 
+    pub fn parse(s: &str) -> Result<Self, ValidationError> {
+        if Uuid::parse_str(s).is_err() {
+            return Err(ValidationError::InvalidCharacter);
+        }
+        Ok(Self(s.to_string()))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

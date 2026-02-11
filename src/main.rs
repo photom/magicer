@@ -33,15 +33,8 @@ async fn main() {
 
     // Build router with middleware
     let app = create_router(app_state)
-        .layer(middleware::from_fn(request_id::add_request_id))
-        // Note: Auth middleware is selectively applied in router or we can apply it globally here if all routes require auth.
-        // The requirement says /v1/ping is public.
-        // So we should NOT apply auth globally here if we want selective auth.
-        // But our router implementation creates routes.
-        // We need to verify where auth middleware is applied.
-        // Looking at our auth tests, we used `from_fn_with_state`.
-        // Let's check `create_router` implementation.
-        ;
+        .layer(middleware::from_fn(magicer::presentation::http::middleware::error_handler::handle_error))
+        .layer(middleware::from_fn(request_id::add_request_id));
 
     // Address to bind to
     let addr = format!("{}:{}", config.server.host, config.server.port);
