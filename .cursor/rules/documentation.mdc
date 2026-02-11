@@ -10,8 +10,8 @@ alwaysApply: true
 
 - When specification or design is changed, update documents.
 - Update the documents first, then update the code.
-- Documentation must comply with Diátaxis
+- Documentation must comply with Diátaxis.
 - Documentations are located in docs.
 - Explanation sentences must describe concisely.
-- Do not write programming codes in documents
-- Use mermaid diagram in order to describe design
+- Do not write programming codes in documents under docs. Alternatively, describe design with sentences and diagram.
+- Use mermaid diagram in order to describe design.
