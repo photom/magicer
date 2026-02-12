@@ -25,6 +25,10 @@ impl AnalyzeContentUseCase {
         filename: WindowsCompatibleFilename,
         data: &[u8],
     ) -> Result<MagicResult, ApplicationError> {
+        if data.is_empty() {
+            return Err(ApplicationError::BadRequest("Content cannot be empty".to_string()));
+        }
+
         let threshold = self.config.analysis.large_file_threshold_mb * 1024 * 1024;
         
         let (mime_type, description) = if data.len() < threshold {

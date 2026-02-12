@@ -63,3 +63,44 @@ async fn test_analyze_path_outside_sandbox_rejected() {
     let result = use_case.execute(request_id, filename, path).await;
     assert!(result.is_err());
 }
+
+struct NotFoundSandbox;
+impl SandboxService for NotFoundSandbox {
+    fn resolve_path(&self, _path: &RelativePath) -> Result<PathBuf, ValidationError> {
+        // Here we simulate successful resolution to a path that then doesn't exist
+        Ok(PathBuf::from("/non_existent_file"))
+    }
+}
+
+#[tokio::test]
+async fn test_analyze_path_not_found() {
+    let repo: Arc<dyn MagicRepository> = Arc::new(FailingMagicRepo);
+    let sandbox: Arc<dyn SandboxService> = Arc::new(NotFoundSandbox);
+    let use_case = AnalyzePathUseCase::new(repo, sandbox);
+    let request_id = RequestId::generate();
+    let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
+    let path = RelativePath::new("missing.pdf").unwrap();
+    
+    // We need to ensure that AnalyzePathUseCase checks for file existence
+    let result = use_case.execute(request_id, filename, path).await;
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(matches!(err, ApplicationError::NotFound(_)));
+}
+
+struct FailingMagicRepo;
+impl MagicRepository for FailingMagicRepo {
+    fn analyze_buffer<'a>(&'a self, _data: &'a [u8], _filename: &'a str) -> BoxFuture<'a, Result<(MimeType, String), MagicError>> {
+        Box::pin(async { Err(MagicError::AnalysisFailed("fail".to_string())) })
+    }
+    fn analyze_file<'a>(&'a self, path: &'a Path) -> BoxFuture<'a, Result<(MimeType, String), MagicError>> {
+        let path_owned = path.to_path_buf();
+        Box::pin(async move { 
+            if !path_owned.exists() {
+                Err(MagicError::FileNotFound(path_owned.to_string_lossy().to_string()))
+            } else {
+                Err(MagicError::AnalysisFailed("fail".to_string()))
+            }
+        })
+    }
+}

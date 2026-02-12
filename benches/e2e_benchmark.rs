@@ -18,7 +18,8 @@ fn setup_bench_server() -> TestServer {
     std::fs::create_dir_all(temp_dir).unwrap();
     let sandbox = Arc::new(PathSandbox::new(PathBuf::from(temp_dir)));
     let auth_service = Arc::new(BasicAuthService::new("admin", "secret"));
-    let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service));
+    let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
+    let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service, config));
     let app = create_router(state)
         .layer(middleware::from_fn(request_id::add_request_id));
     TestServer::new(app).unwrap()

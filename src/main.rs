@@ -16,6 +16,7 @@ async fn main() {
 
     // Load configuration
     let config = ServerConfig::load();
+    config.validate().expect("Failed to validate configuration");
     tracing::info!("Server configuration loaded: {:?}", config);
 
     // Initialize infrastructure
@@ -23,10 +24,9 @@ async fn main() {
     let magic_repo = Arc::new(magicer::infrastructure::magic::libmagic_repository::LibmagicRepository::new()
         .expect("Failed to initialize real libmagic repository"));
     
-    let sandbox = Arc::new(PathSandbox::new(PathBuf::from(&config.analysis.temp_dir)));
+    let sandbox = Arc::new(PathSandbox::new(PathBuf::from(&config.sandbox.base_dir)));
     
-    // In a real app, credentials would come from config or secrets manager
-    let auth_service = Arc::new(BasicAuthService::new("admin", "secret"));
+    let auth_service = Arc::new(BasicAuthService::new(&config.auth.username, &config.auth.password));
 
     // Initialize application state
     let app_state = Arc::new(AppState::new(magic_repo, sandbox, auth_service, Arc::new(config)));
@@ -41,5 +41,34 @@ async fn main() {
     let listener = TcpListener::bind(&addr).await.unwrap();
     tracing::info!("Listening on {}", addr);
 
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .unwrap();
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    tracing::info!("Shutdown signal received, starting graceful shutdown...");
 }
