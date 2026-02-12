@@ -55,7 +55,11 @@ fn main() {
             .arg("--disable-shared")
             .arg("--enable-static")
             .arg("--disable-dependency-tracking")
-            .arg("--with-zlib")
+            .arg("--enable-zlib")
+            .arg("--disable-bzlib")
+            .arg("--disable-xzlib")
+            .arg("--disable-lzlib")
+            .arg("--disable-zstdlib") // This is zstd
             .current_dir(&magic_src)
             .status()
             .unwrap();
