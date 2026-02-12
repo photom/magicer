@@ -227,8 +227,8 @@ impl Default for ServerConfig {
 }
 
 impl ServerConfig {
-    pub fn load() -> Self {
-        let mut config = Self::load_from_toml().unwrap_or_default();
+    pub fn load(config_path: Option<String>) -> Self {
+        let mut config = Self::load_from_toml(config_path).unwrap_or_default();
         config.apply_env_overrides();
         config
     }
@@ -240,9 +240,20 @@ impl ServerConfig {
         if self.server.host.is_empty() {
             return Err(ValidationError::EmptyValue);
         }
-        if !Path::new(&self.sandbox.base_dir).exists() {
-            return Err(ValidationError::FileNotFound);
+        
+        // Ensure directories exist instead of just failing
+        if let Err(_) = fs::create_dir_all(&self.sandbox.base_dir) {
+            if !Path::new(&self.sandbox.base_dir).exists() {
+                return Err(ValidationError::FileNotFound);
+            }
         }
+        
+        if let Err(_) = fs::create_dir_all(&self.analysis.temp_dir) {
+            if !Path::new(&self.analysis.temp_dir).exists() {
+                return Err(ValidationError::FileNotFound);
+            }
+        }
+
         if self.auth.username.is_empty() || self.auth.password.is_empty() {
             // In dev, we might allow empty, but for the test we'll require it
             // return Err(ValidationError::EmptyValue);
@@ -250,11 +261,11 @@ impl ServerConfig {
         Ok(())
     }
 
-    fn load_from_toml() -> Option<Self> {
-        let config_path = env::var("MAGICER_CONFIG_PATH")
-            .unwrap_or_else(|_| "config/config.toml".to_string());
+    fn load_from_toml(config_path: Option<String>) -> Option<Self> {
+        let path = config_path.or_else(|| env::var("MAGICER_CONFIG_PATH").ok())
+            .unwrap_or_else(|| "config/config.toml".to_string());
 
-        fs::read_to_string(config_path)
+        fs::read_to_string(path)
             .ok()
             .and_then(|content| toml::from_str(&content).ok())
     }
@@ -288,6 +299,6 @@ impl ServerConfig {
     }
 
     pub fn load_from_env() -> Self {
-        Self::load()
+        Self::load(None)
     }
 }

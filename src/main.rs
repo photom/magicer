@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::path::PathBuf;
 use axum::middleware;
 use tokio::net::TcpListener;
+use clap::Parser;
 use magicer::presentation::state::app_state::AppState;
 use magicer::presentation::http::router::create_router;
 use magicer::presentation::http::middleware::request_id;
@@ -9,13 +10,24 @@ use magicer::infrastructure::config::server_config::ServerConfig;
 use magicer::infrastructure::filesystem::sandbox::PathSandbox;
 use magicer::infrastructure::auth::basic_auth_service::BasicAuthService;
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Path to the configuration file
+    #[arg(short, long, env = "MAGICER_CONFIG_PATH")]
+    config: Option<String>,
+}
+
 #[tokio::main]
 async fn main() {
+    // Parse CLI arguments
+    let args = Args::parse();
+
     // Initialize tracing
     tracing_subscriber::fmt::init();
 
     // Load configuration
-    let config = ServerConfig::load();
+    let config = ServerConfig::load(args.config);
     config.validate().expect("Failed to validate configuration");
     tracing::info!("Server configuration loaded: {:?}", config);
 

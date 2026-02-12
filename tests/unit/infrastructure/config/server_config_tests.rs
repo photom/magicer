@@ -5,7 +5,6 @@ use std::fs;
 
 #[test]
 fn test_config_defaults() {
-    // Ensure no env vars interfere
     env::remove_var("HOST");
     env::remove_var("PORT");
     env::remove_var("MAGICER_HOST");
@@ -15,13 +14,14 @@ fn test_config_defaults() {
     env::remove_var("MAGICER_SANDBOX_DIR");
     env::remove_var("ANALYSIS_LARGE_FILE_THRESHOLD_MB");
     env::remove_var("MAGICER_CONFIG_PATH");
+    env::remove_var("MAGICER_LOG_LEVEL");
     
     // We expect it to try loading from config/config.toml if it exists.
     // For this test to be truly about defaults, we'd need to ensure config/config.toml is NOT there, 
     // OR we point MAGICER_CONFIG_PATH to a non-existent file.
     env::set_var("MAGICER_CONFIG_PATH", "non_existent.toml");
     
-    let config = ServerConfig::load();
+    let config = ServerConfig::load(None);
     
     assert_eq!(config.server.host, "127.0.0.1");
     assert_eq!(config.server.port, 3000);
@@ -38,7 +38,7 @@ fn test_config_env_overrides() {
     env::set_var("ANALYSIS_LARGE_FILE_THRESHOLD_MB", "50");
     env::set_var("MAGICER_CONFIG_PATH", "non_existent.toml");
     
-    let config = ServerConfig::load();
+    let config = ServerConfig::load(None);
     
     assert_eq!(config.server.host, "0.0.0.0");
     assert_eq!(config.server.port, 8080);
@@ -68,7 +68,7 @@ min_free_space_mb = 512
     fs::write(test_toml, content).unwrap();
     env::set_var("MAGICER_CONFIG_PATH", test_toml);
     
-    let config = ServerConfig::load();
+    let config = ServerConfig::load(None);
     
     assert_eq!(config.server.host, "10.0.0.1");
     assert_eq!(config.server.port, 9000);

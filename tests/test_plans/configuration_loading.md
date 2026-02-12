@@ -9,7 +9,7 @@ This test plan covers the hierarchical configuration loading mechanism, ensuring
 - Ensure no `config/config.toml` exists in the execution path (or point `MAGICER_CONFIG_PATH` to a non-existent file).
 
 **Execution:**
-- Call `ServerConfig::load()`.
+- Call `ServerConfig::load(None)`.
 
 **Assertions:**
 - `server.host` is "127.0.0.1".
@@ -33,7 +33,7 @@ This test plan covers the hierarchical configuration loading mechanism, ensuring
 - Set `MAGICER_CONFIG_PATH` to the path of this temporary file.
 
 **Execution:**
-- Call `ServerConfig::load()`.
+- Call `ServerConfig::load(None)`.
 
 **Assertions:**
 - `server.host` is "10.0.0.1".
@@ -49,7 +49,7 @@ This test plan covers the hierarchical configuration loading mechanism, ensuring
 - Set environment variable `MAGICER_PORT = 9999`.
 
 **Execution:**
-- Call `ServerConfig::load()`.
+- Call `ServerConfig::load(None)`.
 
 **Assertions:**
 - `server.port` is 9999 (Environment variable takes priority).
@@ -61,7 +61,7 @@ This test plan covers the hierarchical configuration loading mechanism, ensuring
 - Set legacy environment variables `HOST = "0.0.0.0"` and `PORT = "8080"`.
 
 **Execution:**
-- Call `ServerConfig::load()`.
+- Call `ServerConfig::load(None)`.
 
 **Assertions:**
 - `server.host` is "0.0.0.0".
@@ -74,7 +74,7 @@ This test plan covers the hierarchical configuration loading mechanism, ensuring
 - Set `MAGICER_CONFIG_PATH` to this file.
 
 **Execution:**
-- Call `ServerConfig::load()`.
+- Call `ServerConfig::load(None)`.
 
 **Assertions:**
 - The function does not panic.
@@ -88,7 +88,7 @@ This test plan covers the hierarchical configuration loading mechanism, ensuring
 - Set `MAGICER_CONFIG_PATH` to `custom_path.toml`.
 
 **Execution:**
-- Call `ServerConfig::load()`.
+- Call `ServerConfig::load(None)`.
 
 **Assertions:**
 - The configuration is loaded from `custom_path.toml`.

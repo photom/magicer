@@ -47,7 +47,7 @@ impl MmapHandler {
         // Install SIGBUS handler
         unsafe {
             let mut sa: libc::sigaction = std::mem::zeroed();
-            sa.sa_sigaction = handle_sigbus as usize;
+            sa.sa_sigaction = handle_sigbus as *const () as usize;
             libc::sigemptyset(&mut sa.sa_mask);
             libc::sigaction(libc::SIGBUS, &sa, ptr::null_mut());
         }
