@@ -4,7 +4,8 @@ description: Strict Rust naming & conventions enforcement using official Rust Gu
 globs:
   - "**/*.rs"
   - "src/**/*.rs"
-  - "compiler/**/*.rs"
+  - "bench/**/*.rs"
+  - "tests/**/*.rs"
 ---
 
 # Rust Conventions
