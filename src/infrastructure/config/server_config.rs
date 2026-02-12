@@ -39,7 +39,7 @@ pub struct ServerSection {
 }
 
 fn default_host() -> String { "127.0.0.1".to_string() }
-fn default_port() -> u16 { 3000 }
+fn default_port() -> u16 { 8080 }
 fn default_max_connections() -> u32 { 1000 }
 fn default_backlog() -> u32 { 1024 }
 fn default_max_open_files() -> u32 { 4096 }

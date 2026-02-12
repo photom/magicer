@@ -2,8 +2,10 @@ use magicer::infrastructure::config::server_config::ServerConfig;
 use magicer::domain::errors::ValidationError;
 use std::env;
 use std::fs;
+use serial_test::serial;
 
 #[test]
+#[serial]
 fn test_config_defaults() {
     env::remove_var("HOST");
     env::remove_var("PORT");
@@ -24,7 +26,7 @@ fn test_config_defaults() {
     let config = ServerConfig::load(None);
     
     assert_eq!(config.server.host, "127.0.0.1");
-    assert_eq!(config.server.port, 3000);
+    assert_eq!(config.server.port, 8080);
     assert_eq!(config.analysis.large_file_threshold_mb, 10);
     assert_eq!(config.analysis.write_buffer_size_kb, 64);
     
@@ -32,6 +34,7 @@ fn test_config_defaults() {
 }
 
 #[test]
+#[serial]
 fn test_config_env_overrides() {
     env::set_var("MAGICER_HOST", "0.0.0.0");
     env::set_var("MAGICER_PORT", "8080");
@@ -52,6 +55,7 @@ fn test_config_env_overrides() {
 }
 
 #[test]
+#[serial]
 fn test_config_toml_loading() {
     let test_toml = "test_config.toml";
     let content = r#"
