@@ -84,4 +84,5 @@
 - Start server.
 
 **Assertions:**
-- Process exits with error "Sandbox directory does not exist".
+- Process exits with panic/error "Failed to validate configuration".
+- Error cause indicates "File or directory not found".

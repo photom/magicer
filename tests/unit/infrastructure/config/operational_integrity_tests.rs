@@ -1,6 +1,4 @@
 use magicer::infrastructure::config::server_config::ServerConfig;
-use std::env;
-use std::fs;
 use tempfile::tempdir;
 
 #[test]

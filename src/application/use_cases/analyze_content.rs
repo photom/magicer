@@ -35,7 +35,7 @@ impl AnalyzeContentUseCase {
             self.magic_repo.analyze_buffer(data, filename.as_str()).await?
         } else {
             let temp_dir = Path::new(&self.config.analysis.temp_dir);
-            let mut temp_file = TempFileHandler::create_temp_file(data, temp_dir)
+            let temp_file = TempFileHandler::create_temp_file(data, temp_dir)
                 .map_err(|e| ApplicationError::InternalError(format!("Failed to create temp file: {}", e)))?;
             
             let mmap = MmapHandler::new(&std::fs::File::open(temp_file.path()).unwrap())

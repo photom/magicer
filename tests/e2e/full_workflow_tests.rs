@@ -71,7 +71,7 @@ async fn test_analyze_content_large_file_success() {
         .post("/v1/magic/content")
         .add_query_param("filename", "large.png")
         .add_header(header::AUTHORIZATION, HeaderValue::from_static("Basic YWRtaW46c2VjcmV0"))
-        .bytes(b"\x89PNG\r\n\x1a\n".to_vec())
+        .bytes(b"\x89PNG\r\n\x1a\n".to_vec().into())
         .await;
     
     response.assert_status_ok();

@@ -28,6 +28,9 @@ async fn main() {
     
     let auth_service = Arc::new(BasicAuthService::new(&config.auth.username, &config.auth.password));
 
+    // Address to bind to
+    let addr = format!("{}:{}", config.server.host, config.server.port);
+
     // Initialize application state
     let app_state = Arc::new(AppState::new(magic_repo, sandbox, auth_service, Arc::new(config)));
 
@@ -36,8 +39,6 @@ async fn main() {
         .layer(middleware::from_fn(magicer::presentation::http::middleware::error_handler::handle_error))
         .layer(middleware::from_fn(request_id::add_request_id));
 
-    // Address to bind to
-    let addr = format!("{}:{}", config.server.host, config.server.port);
     let listener = TcpListener::bind(&addr).await.unwrap();
     tracing::info!("Listening on {}", addr);
 

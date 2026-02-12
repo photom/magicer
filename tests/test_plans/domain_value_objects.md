@@ -1,6 +1,6 @@
 # Test Plan: WindowsCompatibleFilename
 
-## test_filename_valid_accepted
+## test_new_with_valid_name_returns_success
 
 **Setup:**
 - Valid filename string "test.txt"
@@ -12,7 +12,7 @@
 - Result is `Ok`
 - `as_str()` returns "test.txt"
 
-## test_filename_with_slash_rejected
+## test_new_with_slash_returns_error
 
 **Setup:**
 - Filename string containing forward slash "folder/file.txt"
@@ -24,7 +24,7 @@
 - Result is `Err`
 - Error variant matches `ValidationError::InvalidCharacter`
 
-## test_filename_with_null_byte_rejected
+## test_new_with_null_byte_returns_error
 
 **Setup:**
 - Filename string containing null byte "file\0.txt"
@@ -36,7 +36,7 @@
 - Result is `Err`
 - Error variant matches `ValidationError::InvalidCharacter`
 
-## test_filename_too_long_rejected
+## test_new_with_too_long_name_returns_error
 
 **Setup:**
 - Filename string exceeding 310 characters
@@ -48,7 +48,7 @@
 - Result is `Err`
 - Error variant matches `ValidationError::ExceedsMaxLength`
 
-## test_filename_max_length_accepted
+## test_new_with_max_length_name_returns_success
 
 **Setup:**
 - Filename string exactly 310 characters
@@ -59,7 +59,7 @@
 **Assertions:**
 - Result is `Ok`
 
-## test_filename_empty_rejected
+## test_new_with_empty_name_returns_error
 
 **Setup:**
 - Empty string ""
@@ -71,7 +71,7 @@
 - Result is `Err`
 - Error variant matches `ValidationError::EmptyValue`
 
-## test_filename_unicode_accepted
+## test_new_with_unicode_name_returns_success
 
 **Setup:**
 - Unicode filename "файл_测试_🎉.txt"
@@ -83,9 +83,21 @@
 - Result is `Ok`
 - `as_str()` returns original string
 
+## test_new_with_reserved_characters_returns_error
+
+**Setup:**
+- Filename containing Windows reserved characters (\, :, *, ?, ", <, >, |)
+
+**Execution:**
+- Call `WindowsCompatibleFilename::new(reserved_name)`
+
+**Assertions:**
+- Result is `Err`
+- Error variant matches `ValidationError::InvalidCharacter`
+
 # Test Plan: RelativePath
 
-## test_path_valid_accepted
+## test_new_with_valid_path_returns_success
 
 **Setup:**
 - Valid relative path "uploads/file.txt"
@@ -97,7 +109,7 @@
 - Result is `Ok`
 - `as_str()` returns "uploads/file.txt"
 
-## test_path_absolute_rejected
+## test_new_with_absolute_path_returns_error
 
 **Setup:**
 - Absolute path "/etc/passwd"
@@ -109,19 +121,19 @@
 - Result is `Err`
 - Error variant matches `ValidationError::AbsolutePath`
 
-## test_path_traversal_rejected
+## test_new_with_traversal_returns_error
 
 **Setup:**
-- Path with traversal "../etc/passwd"
+- Path with traversal "../etc/passwd", "data/../file.txt"
 
 **Execution:**
-- Call `RelativePath::new("../etc/passwd")`
+- Call `RelativePath::new(path)`
 
 **Assertions:**
 - Result is `Err`
 - Error variant matches `ValidationError::PathTraversal`
 
-## test_path_double_slash_rejected
+## test_new_with_double_slash_returns_error
 
 **Setup:**
 - Path with double slash "data//file.txt"
@@ -133,7 +145,7 @@
 - Result is `Err`
 - Error variant matches `ValidationError::InvalidPath`
 
-## test_path_ends_with_dot_rejected
+## test_new_with_dot_suffix_returns_error
 
 **Setup:**
 - Path ending with dot "data/."
@@ -145,7 +157,7 @@
 - Result is `Err`
 - Error variant matches `ValidationError::InvalidPath`
 
-## test_path_leading_space_rejected
+## test_new_with_leading_space_returns_error
 
 **Setup:**
 - Path with leading space " data/file.txt"
@@ -159,7 +171,7 @@
 
 # Test Plan: RequestId
 
-## test_request_id_generate
+## test_generate_returns_valid_uuid_v4
 
 **Setup:**
 - None
@@ -171,7 +183,7 @@
 - Returns a `RequestId`
 - `as_str()` returns a valid UUID v4 string
 
-## test_request_id_from_valid_uuid
+## test_try_from_with_valid_uuid_returns_success
 
 **Setup:**
 - Valid UUID v4 string
@@ -182,7 +194,7 @@
 **Assertions:**
 - Result is `Ok`
 
-## test_request_id_from_invalid_uuid
+## test_try_from_with_invalid_uuid_returns_error
 
 **Setup:**
 - Invalid UUID string "not-a-uuid"
@@ -196,7 +208,7 @@
 
 # Test Plan: MimeType
 
-## test_mime_type_valid_accepted
+## test_try_from_with_valid_mime_returns_success
 
 **Setup:**
 - Valid MIME type string "application/pdf"
@@ -208,7 +220,7 @@
 - Result is `Ok`
 - `as_str()` returns "application/pdf"
 
-## test_mime_type_invalid_format_rejected
+## test_try_from_with_invalid_format_returns_error
 
 **Setup:**
 - Invalid MIME type string "not-a-mime" (missing slash)
@@ -220,7 +232,7 @@
 - Result is `Err`
 - Error variant matches `ValidationError::InvalidCharacter`
 
-## test_mime_type_empty_rejected
+## test_try_from_with_empty_string_returns_error
 
 **Setup:**
 - Empty string ""
@@ -234,7 +246,7 @@
 
 # Test Plan: BasicAuthCredentials
 
-## test_credentials_valid_accepted
+## test_new_with_valid_credentials_returns_success
 
 **Setup:**
 - Username "user", password "pass"
@@ -247,7 +259,7 @@
 - `username()` returns "user"
 - `password()` returns "pass"
 
-## test_credentials_empty_username_rejected
+## test_new_with_empty_username_returns_error
 
 **Setup:**
 - Username "", password "pass"
@@ -259,14 +271,15 @@
 - Result is `Err`
 - Error variant matches `ValidationError::EmptyValue`
 
-## test_credentials_empty_password_rejected
+## test_verify_with_correct_credentials_returns_true
 
 **Setup:**
-- Username "user", password ""
+- Username "admin", password "secret"
 
 **Execution:**
-- Call `BasicAuthCredentials::new("user", "")`
+- Call `BasicAuthCredentials::new("admin", "secret")`
+- Call `creds.verify("admin", "secret")`
 
 **Assertions:**
-- Result is `Err`
-- Error variant matches `ValidationError::EmptyValue`
+- `verify` returns `true`
+- `verify("admin", "wrong")` returns `false`

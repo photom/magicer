@@ -8,6 +8,7 @@ pub enum ValidationError {
     AbsolutePath,
     PathTraversal,
     InvalidPath,
+    FileNotFound,
 }
 
 impl fmt::Display for ValidationError {
@@ -19,6 +20,7 @@ impl fmt::Display for ValidationError {
             Self::AbsolutePath => write!(f, "Absolute path not allowed"),
             Self::PathTraversal => write!(f, "Path traversal not allowed"),
             Self::InvalidPath => write!(f, "Invalid path"),
+            Self::FileNotFound => write!(f, "File or directory not found"),
         }
     }
 }

@@ -1,7 +1,6 @@
 use magicer::infrastructure::auth::basic_auth_service::BasicAuthService;
 use magicer::domain::services::authentication_service::AuthenticationService;
 use magicer::domain::value_objects::auth::BasicAuthCredentials;
-use std::sync::Arc;
 use std::time::Instant;
 
 #[tokio::test]

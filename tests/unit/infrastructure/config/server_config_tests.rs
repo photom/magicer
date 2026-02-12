@@ -1,4 +1,5 @@
 use magicer::infrastructure::config::server_config::ServerConfig;
+use magicer::domain::errors::ValidationError;
 use std::env;
 use std::fs;
 
@@ -9,6 +10,9 @@ fn test_config_defaults() {
     env::remove_var("PORT");
     env::remove_var("MAGICER_HOST");
     env::remove_var("MAGICER_PORT");
+    env::remove_var("MAGICER_AUTH_USERNAME");
+    env::remove_var("MAGICER_AUTH_PASSWORD");
+    env::remove_var("MAGICER_SANDBOX_DIR");
     env::remove_var("ANALYSIS_LARGE_FILE_THRESHOLD_MB");
     env::remove_var("MAGICER_CONFIG_PATH");
     
@@ -74,4 +78,43 @@ min_free_space_mb = 512
     // Cleanup
     fs::remove_file(test_toml).unwrap();
     env::remove_var("MAGICER_CONFIG_PATH");
+}
+
+#[test]
+fn test_validate_success() {
+    let mut config = ServerConfig::default();
+    // Ensure sandbox dir exists
+    let temp_dir = std::env::temp_dir().join("magicer_test_success");
+    fs::create_dir_all(&temp_dir).unwrap();
+    config.sandbox.base_dir = temp_dir.to_str().unwrap().to_string();
+    
+    assert!(config.validate().is_ok());
+    
+    fs::remove_dir_all(temp_dir).unwrap();
+}
+
+#[test]
+fn test_validate_missing_sandbox_dir() {
+    let mut config = ServerConfig::default();
+    config.sandbox.base_dir = "/non/existent/path/definitely".to_string();
+    
+    let result = config.validate();
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err(), ValidationError::FileNotFound);
+}
+
+#[test]
+fn test_validate_empty_host() {
+    let mut config = ServerConfig::default();
+    config.server.host = "".to_string();
+    // Ensure sandbox exists so we don't fail on that
+    let temp_dir = std::env::temp_dir().join("magicer_test_host");
+    fs::create_dir_all(&temp_dir).unwrap();
+    config.sandbox.base_dir = temp_dir.to_str().unwrap().to_string();
+
+    let result = config.validate();
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err(), ValidationError::EmptyValue);
+    
+    fs::remove_dir_all(temp_dir).unwrap();
 }

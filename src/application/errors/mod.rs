@@ -44,7 +44,10 @@ impl From<DomainError> for ApplicationError {
     fn from(err: DomainError) -> Self {
         match err {
             DomainError::ValidationError(e) => Self::BadRequest(e.to_string()),
-            DomainError::MagicError(e) => Self::UnprocessableEntity(e.to_string()),
+            DomainError::MagicError(e) => match e {
+                crate::domain::errors::MagicError::FileNotFound(path) => Self::NotFound(format!("File not found: {}", path)),
+                _ => Self::UnprocessableEntity(e.to_string()),
+            },
             DomainError::FileNotFound(path) => Self::NotFound(format!("File not found: {}", path)),
             DomainError::PermissionDenied(path) => Self::Forbidden(format!("Permission denied: {}", path)),
             DomainError::ConfigurationError(msg) => Self::InternalError(msg),
@@ -54,7 +57,10 @@ impl From<DomainError> for ApplicationError {
 
 impl From<crate::domain::errors::MagicError> for ApplicationError {
     fn from(err: crate::domain::errors::MagicError) -> Self {
-        Self::UnprocessableEntity(err.to_string())
+        match err {
+            crate::domain::errors::MagicError::FileNotFound(path) => Self::NotFound(format!("File not found: {}", path)),
+            _ => Self::UnprocessableEntity(err.to_string()),
+        }
     }
 }
 

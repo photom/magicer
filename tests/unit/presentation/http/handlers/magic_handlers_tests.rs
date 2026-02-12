@@ -4,12 +4,14 @@ use axum::{
 };
 use magicer::presentation::http::router::create_router;
 use magicer::presentation::state::app_state::AppState;
+use magicer::presentation::http::middleware::{error_handler, request_id};
 use magicer::infrastructure::magic::fake_magic_repository::FakeMagicRepository;
 use magicer::infrastructure::filesystem::sandbox::PathSandbox;
 use crate::fake_auth::FakeAuth;
 use tower::ServiceExt;
 use std::sync::Arc;
 use std::path::PathBuf;
+use axum::middleware;
 
 #[tokio::test]
 async fn test_analyze_content_handler_success() {
@@ -18,7 +20,9 @@ async fn test_analyze_content_handler_success() {
     let auth_service = Arc::new(FakeAuth);
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
     let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service, config));
-    let router = create_router(state);
+    let router = create_router(state)
+        .layer(middleware::from_fn(error_handler::handle_error))
+        .layer(middleware::from_fn(request_id::add_request_id));
 
     let response = router
         .oneshot(
@@ -51,7 +55,9 @@ async fn test_analyze_path_handler_success() {
     let auth_service = Arc::new(FakeAuth);
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
     let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service, config));
-    let router = create_router(state);
+    let router = create_router(state)
+        .layer(middleware::from_fn(error_handler::handle_error))
+        .layer(middleware::from_fn(request_id::add_request_id));
 
     let response = router
         .oneshot(

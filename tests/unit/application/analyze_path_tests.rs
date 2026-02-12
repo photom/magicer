@@ -9,6 +9,7 @@ use magicer::domain::value_objects::filename::WindowsCompatibleFilename;
 use magicer::domain::value_objects::path::RelativePath;
 use magicer::domain::value_objects::mime_type::MimeType;
 use magicer::domain::errors::{MagicError, ValidationError};
+use magicer::application::errors::ApplicationError;
 
 struct FakeMagicRepo;
 impl MagicRepository for FakeMagicRepo {

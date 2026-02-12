@@ -7,6 +7,7 @@ use magicer::domain::value_objects::request_id::RequestId;
 use magicer::domain::value_objects::filename::WindowsCompatibleFilename;
 use magicer::domain::value_objects::mime_type::MimeType;
 use magicer::domain::errors::MagicError;
+use magicer::application::errors::ApplicationError;
 
 struct FakeMagicRepo;
 

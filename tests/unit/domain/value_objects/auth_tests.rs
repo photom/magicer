@@ -1,7 +1,7 @@
 use magicer::domain::value_objects::auth::BasicAuthCredentials;
 
 #[test]
-fn test_credentials_valid_accepted() {
+fn test_new_with_valid_credentials_returns_success() {
     let creds = BasicAuthCredentials::new("user", "pass");
     assert!(creds.is_ok());
     let creds = creds.unwrap();
@@ -10,7 +10,7 @@ fn test_credentials_valid_accepted() {
 }
 
 #[test]
-fn test_credentials_verify() {
+fn test_verify_with_correct_credentials_returns_true() {
     let creds = BasicAuthCredentials::new("admin", "secret").unwrap();
     assert!(creds.verify("admin", "secret"));
     assert!(!creds.verify("admin", "wrong"));
@@ -18,13 +18,13 @@ fn test_credentials_verify() {
 }
 
 #[test]
-fn test_credentials_no_colon_allowed() {
+fn test_new_with_colon_in_username_returns_error() {
     let creds = BasicAuthCredentials::new("user:name", "pass");
     assert!(creds.is_err());
 }
 
 #[test]
-fn test_credentials_empty_username_rejected() {
+fn test_new_with_empty_username_returns_error() {
     let creds = BasicAuthCredentials::new("", "pass");
     assert!(creds.is_err());
 }

@@ -4,7 +4,6 @@ use axum::{
     middleware::from_fn,
     routing::get,
     Router,
-    response::IntoResponse,
 };
 use magicer::presentation::http::middleware::error_handler::handle_error;
 use magicer::presentation::http::middleware::request_id::add_request_id;
