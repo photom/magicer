@@ -25,11 +25,13 @@ fn main() {
 
         // OpenSSF Hardening Flags
         // https://best.openssf.org/Compiler-Hardening-Guides/Compiler-Options-Hardening-Guide-for-C-and-C++.html
-        let cflags = "-O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -fstack-clash-protection -fcf-protection -fPIC -Wall -Wformat -Wformat-security";
+        let cflags = "-O2 -D_FORTIFY_SOURCE=2 -fstack-protector-strong -fstack-clash-protection -fcf-protection -fPIC -Wall -Wformat -Wformat-security";
         let ldflags = "-Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack";
 
-        env::set_var("CFLAGS", cflags);
-        env::set_var("LDFLAGS", ldflags);
+        unsafe {
+            env::set_var("CFLAGS", cflags);
+            env::set_var("LDFLAGS", ldflags);
+        }
 
         Command::new("./configure").arg(format!("--prefix={}", install_dir.display())).arg("--static").current_dir(&zlib_src).status().unwrap();
         Command::new("make").arg("-j").arg(num_cpus::get().to_string()).current_dir(&zlib_src).status().unwrap();
@@ -47,8 +49,10 @@ fn main() {
         let magic_src = build_dir.join(format!("file-{}", magic_version));
         
         // Point libmagic to our local zlib AND apply hardening
-        env::set_var("CFLAGS", format!("{} -I{}/include", cflags, install_dir.display()));
-        env::set_var("LDFLAGS", format!("{} -L{}/lib", ldflags, install_dir.display()));
+        unsafe {
+            env::set_var("CFLAGS", format!("{} -I{}/include", cflags, install_dir.display()));
+            env::set_var("LDFLAGS", format!("{} -L{}/lib", ldflags, install_dir.display()));
+        }
         
         Command::new("./configure")
             .arg(format!("--prefix={}", install_dir.display()))
@@ -59,7 +63,7 @@ fn main() {
             .arg("--disable-bzlib")
             .arg("--disable-xzlib")
             .arg("--disable-lzlib")
-            .arg("--disable-zstdlib") // This is zstd
+            .arg("--disable-zstdlib")
             .current_dir(&magic_src)
             .status()
             .unwrap();
@@ -71,6 +75,5 @@ fn main() {
     println!("cargo:rustc-link-search=native={}/lib", install_dir.display());
     println!("cargo:rustc-link-lib=static=magic");
     println!("cargo:rustc-link-lib=static=z");
-    
     println!("cargo:rerun-if-changed=build.rs");
 }

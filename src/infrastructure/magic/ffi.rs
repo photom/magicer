@@ -7,7 +7,7 @@ pub const MAGIC_MIME_TYPE: c_int = 0x000010;
 pub const MAGIC_ERROR: c_int = 0x000200;
 
 #[link(name = "magic")]
-extern "C" {
+unsafe extern "C" {
     pub fn magic_open(flags: c_int) -> MagicT;
     pub fn magic_close(ms: MagicT);
     pub fn magic_error(ms: MagicT) -> *const c_char;

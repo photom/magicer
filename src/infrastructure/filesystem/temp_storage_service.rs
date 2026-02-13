@@ -2,7 +2,6 @@ use crate::domain::services::temp_storage::{TempStorageService, TemporaryFile};
 use crate::infrastructure::filesystem::temp_file_handler::TempFileHandler;
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 
@@ -43,7 +42,7 @@ impl TemporaryFile for FsTempFile {
     }
 
     async fn sync(&mut self) -> Result<(), std::io::Error> {
-        if let Some(mut file) = self.file.take() {
+        if let Some(file) = self.file.take() {
             file.sync_all().await?;
             Ok(())
         } else {

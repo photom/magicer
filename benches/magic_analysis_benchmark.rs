@@ -1,4 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
 use magicer::domain::repositories::magic_repository::MagicRepository;
 use magicer::infrastructure::magic::fake_magic_repository::FakeMagicRepository;
 use std::sync::Arc;

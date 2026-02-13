@@ -1578,6 +1578,38 @@ Tell Rust linker to link against libmagic.
 - Verify library exists
 - Generate bindings (if using bindgen)
 
+**Hardening Flags:**
+
+OpenSSF Hardening Flags: https://best.openssf.org/Compiler-Hardening-Guides/Compiler-Options-Hardening-Guide-for-C-and-C++.html
+
+The `libmagic` and `zlib` libraries are compiled from source with the following hardening flags to ensure production-grade security:
+
+**CFLAGS:**
+```bash
+-O2 -D_FORTIFY_SOURCE=2 -fstack-protector-strong -fstack-clash-protection -fcf-protection -fPIC -Wall -Wformat -Wformat-security
+```
+
+| Flag                         | Purpose                                            |
+|------------------------------|----------------------------------------------------|
+| `-O2`                        | Optimization level 2                               |
+| `-D_FORTIFY_SOURCE=2`        | Buffer overflow detection and mitigation           |
+| `-fstack-protector-strong`   | Stack smashing protection                          |
+| `-fstack-clash-protection`   | Protection against stack-clash attacks             |
+| `-fcf-protection`            | Control-flow integrity protection                  |
+| `-fPIC`                      | Position Independent Code (required for libraries) |
+| `-Wformat -Wformat-security` | Format string vulnerability protection             |
+
+**LDFLAGS:**
+```bash
+-Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack
+```
+
+| Flag | Purpose |
+|------|---------|
+| `-Wl,-z,relro` | Read-only relocations |
+| `-Wl,-z,now` | Immediate binding (Full RELRO) |
+| `-Wl,-z,noexecstack` | Marks stack as non-executable |
+
 **For Manual FFI:** Minimal build script, just link directive.
 
 ---

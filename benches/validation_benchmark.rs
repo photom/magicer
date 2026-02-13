@@ -1,4 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
 use magicer::domain::value_objects::filename::WindowsCompatibleFilename;
 use magicer::domain::value_objects::path::RelativePath;
 

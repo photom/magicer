@@ -86,8 +86,8 @@ redocly build-docs api/v1/openapi.yaml --output docs.html
 
 ## Technology Stack
 
-- **Language:** Rust (edition 2021)
-- **Web Framework:** Axum 0.7
+- **Language:** Rust (edition 2024)
+- **Web Framework:** Axum 0.8.8
 - **Async Runtime:** Tokio
 - **File Magic:** libmagic bindings
 - **Architecture:** Clean Architecture with DDD principles

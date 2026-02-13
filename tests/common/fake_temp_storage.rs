@@ -1,7 +1,7 @@
 use magicer::domain::services::temp_storage::{TempStorageService, TemporaryFile};
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
-use tokio::fs::{File, OpenOptions};
+use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

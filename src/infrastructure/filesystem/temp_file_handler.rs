@@ -1,5 +1,5 @@
 use crate::infrastructure::errors::InfrastructureError;
-use rand::{distributions::Alphanumeric, Rng};
+use rand::{distr::Alphanumeric, RngExt};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -127,7 +127,7 @@ impl TempFileHandler {
             .unwrap_or_default()
             .as_nanos();
         let uuid = Uuid::new_v4().simple().to_string();
-        let random: String = rand::thread_rng()
+        let random: String = rand::rng()
             .sample_iter(&Alphanumeric)
             .take(8)
             .map(char::from)

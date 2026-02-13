@@ -12,14 +12,17 @@ use std::path::PathBuf;
 use axum::middleware;
 use tokio::runtime::Runtime;
 
+use magicer::infrastructure::filesystem::temp_storage_service::FsTempStorageService;
+
 fn setup_bench_server() -> TestServer {
     let magic_repo = Arc::new(FakeMagicRepository::new().unwrap());
     let temp_dir = "/tmp/magicer_bench";
     std::fs::create_dir_all(temp_dir).unwrap();
     let sandbox = Arc::new(PathSandbox::new(PathBuf::from(temp_dir)));
+    let temp_storage = Arc::new(FsTempStorageService::new(PathBuf::from(temp_dir).join("temp")));
     let auth_service = Arc::new(BasicAuthService::new("admin", "secret"));
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service, config));
+    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, config));
     let app = create_router(state)
         .layer(middleware::from_fn(request_id::add_request_id));
     TestServer::new(app).unwrap()

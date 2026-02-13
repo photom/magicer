@@ -44,25 +44,29 @@ large_file_threshold_mb = 5
 #[serial]
 fn test_env_overrides() {
     // Clear potentially conflicting env vars
-    env::remove_var("MAGICER_HOST");
-    env::remove_var("MAGICER_PORT");
-    env::remove_var("HOST");
-    env::remove_var("PORT");
-    
-    env::set_var("MAGICER_HOST", "0.0.0.0");
-    env::set_var("MAGICER_PORT", "7070");
-    
-    // Ensure we don't load from a default file if it exists
-    env::set_var("MAGICER_CONFIG_PATH", "/non/existent/config.toml");
-    
+    unsafe {
+        env::remove_var("MAGICER_HOST");
+        env::remove_var("MAGICER_PORT");
+        env::remove_var("HOST");
+        env::remove_var("PORT");
+
+        env::set_var("MAGICER_HOST", "0.0.0.0");
+        env::set_var("MAGICER_PORT", "7070");
+
+        // Ensure we don't load from a default file if it exists
+        env::set_var("MAGICER_CONFIG_PATH", "/non/existent/config.toml");
+    }
+
     let config = ServerConfig::load(None);
-    
+
     assert_eq!(config.server.host, "0.0.0.0");
     assert_eq!(config.server.port, 7070);
-    
-    env::remove_var("MAGICER_HOST");
-    env::remove_var("MAGICER_PORT");
-    env::remove_var("MAGICER_CONFIG_PATH");
+
+    unsafe {
+        env::remove_var("MAGICER_HOST");
+        env::remove_var("MAGICER_PORT");
+        env::remove_var("MAGICER_CONFIG_PATH");
+    }
 }
 
 #[test]

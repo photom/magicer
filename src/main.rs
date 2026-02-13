@@ -90,9 +90,10 @@ async fn main() {
         .layer(DefaultBodyLimit::max(
             (config.server.limits.max_body_size_mb * 1024 * 1024) as usize,
         ))
-        .layer(TimeoutLayer::new(Duration::from_secs(
-            config.server.timeouts.read_timeout_secs,
-        )));
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::GATEWAY_TIMEOUT,
+            Duration::from_secs(config.server.timeouts.read_timeout_secs),
+        ));
 
     // Create a TCP listener with custom backlog
     let socket = socket2::Socket::new(
