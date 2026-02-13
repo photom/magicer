@@ -86,9 +86,10 @@ impl AnalyzeContentUseCase {
                         .config
                         .get_free_space_mb(&self.config.analysis.temp_dir);
                     if free_space < self.config.analysis.min_free_space_mb {
-                        return Err(ApplicationError::InternalError(
-                            "Insufficient storage space for analysis".to_string(),
-                        ));
+                        return Err(ApplicationError::InsufficientStorage(format!(
+                            "Insufficient storage space for analysis: {}MB available, but {}MB required",
+                            free_space, self.config.analysis.min_free_space_mb
+                        )));
                     }
 
                     is_large = true;

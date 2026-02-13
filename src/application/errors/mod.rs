@@ -8,6 +8,7 @@ pub enum ApplicationError {
     Forbidden(String),
     NotFound(String),
     UnprocessableEntity(String),
+    InsufficientStorage(String),
     InternalError(String),
     Timeout,
 }
@@ -20,6 +21,7 @@ impl ApplicationError {
             Self::Forbidden(_) => axum::http::StatusCode::FORBIDDEN,
             Self::NotFound(_) => axum::http::StatusCode::NOT_FOUND,
             Self::UnprocessableEntity(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Self::InsufficientStorage(_) => axum::http::StatusCode::INSUFFICIENT_STORAGE,
             Self::InternalError(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             Self::Timeout => axum::http::StatusCode::GATEWAY_TIMEOUT,
         }
@@ -34,6 +36,7 @@ impl fmt::Display for ApplicationError {
             Self::Forbidden(msg) => write!(f, "Forbidden: {}", msg),
             Self::NotFound(msg) => write!(f, "Not Found: {}", msg),
             Self::UnprocessableEntity(msg) => write!(f, "Unprocessable Entity: {}", msg),
+            Self::InsufficientStorage(msg) => write!(f, "Insufficient Storage: {}", msg),
             Self::InternalError(msg) => write!(f, "Internal Error: {}", msg),
             Self::Timeout => write!(f, "Timeout"),
         }
@@ -49,6 +52,12 @@ impl From<DomainError> for ApplicationError {
                     Self::NotFound(format!("File not found: {}", path))
                 }
                 _ => Self::UnprocessableEntity(e.to_string()),
+            },
+            DomainError::StorageError(e) => match e {
+                crate::domain::errors::StorageError::InsufficientSpace { .. } => {
+                    Self::InsufficientStorage(e.to_string())
+                }
+                _ => Self::InternalError(e.to_string()),
             },
             DomainError::FileNotFound(path) => Self::NotFound(format!("File not found: {}", path)),
             DomainError::PermissionDenied(path) => {

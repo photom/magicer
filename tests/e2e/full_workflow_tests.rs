@@ -28,6 +28,8 @@ fn setup_test_server(config_override: Option<Box<dyn FnOnce(&mut ServerConfig)>>
     
     let mut config = ServerConfig::default();
     config.sandbox.base_dir = test_dir.to_string_lossy().to_string();
+    config.analysis.temp_dir = test_dir.join("temp").to_string_lossy().to_string();
+    config.analysis.min_free_space_mb = 0; // Disable check for tests
     config.auth.username = "admin".to_string();
     config.auth.password = "secret".to_string();
     

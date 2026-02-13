@@ -1,4 +1,7 @@
+pub mod storage_error;
+
 use std::fmt;
+pub use storage_error::StorageError;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ValidationError {
@@ -61,6 +64,7 @@ impl fmt::Display for AuthenticationError {
 pub enum DomainError {
     ValidationError(ValidationError),
     MagicError(MagicError),
+    StorageError(StorageError),
     FileNotFound(String),
     PermissionDenied(String),
     ConfigurationError(String),
@@ -71,6 +75,7 @@ impl fmt::Display for DomainError {
         match self {
             Self::ValidationError(e) => write!(f, "Validation error: {}", e),
             Self::MagicError(e) => write!(f, "Magic error: {}", e),
+            Self::StorageError(e) => write!(f, "Storage error: {}", e),
             Self::FileNotFound(path) => write!(f, "File not found: {}", path),
             Self::PermissionDenied(path) => write!(f, "Permission denied: {}", path),
             Self::ConfigurationError(msg) => write!(f, "Configuration error: {}", msg),
@@ -87,5 +92,11 @@ impl From<ValidationError> for DomainError {
 impl From<MagicError> for DomainError {
     fn from(err: MagicError) -> Self {
         Self::MagicError(err)
+    }
+}
+
+impl From<StorageError> for DomainError {
+    fn from(err: StorageError) -> Self {
+        Self::StorageError(err)
     }
 }
