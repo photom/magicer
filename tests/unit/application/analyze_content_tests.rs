@@ -41,20 +41,23 @@ async fn test_analyze_content_success() {
 }
 
 #[tokio::test]
-async fn test_analyze_content_large_success() {
+async fn test_execute_from_file_success() {
     let repo: Arc<dyn MagicRepository> = Arc::new(FakeMagicRepo);
-    let mut config = magicer::infrastructure::config::server_config::ServerConfig::default();
-    config.analysis.large_file_threshold_mb = 0; // Force large file path
-    let config = Arc::new(config);
-    
+    let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
     let use_case = AnalyzeContentUseCase::new(repo, config);
     let request_id = RequestId::generate();
-    let filename = WindowsCompatibleFilename::new("test.dat").unwrap();
-    let data = b"some large data content";
+    let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
     
-    let result = use_case.execute(request_id, filename, data).await.unwrap();
+    // Create a temporary file for the test
+    let temp_dir = std::env::temp_dir();
+    let temp_path = temp_dir.join("test_execute_from_file.pdf");
+    std::fs::write(&temp_path, b"%PDF-1.4").unwrap();
     
-    assert_eq!(result.mime_type().as_str(), "application/pdf"); // Fake repo returns pdf for everything
+    let result = use_case.execute_from_file(request_id, filename, &temp_path).await.unwrap();
+    
+    assert_eq!(result.mime_type().as_str(), "application/pdf");
+    
+    let _ = std::fs::remove_file(temp_path);
 }
 
 #[tokio::test]

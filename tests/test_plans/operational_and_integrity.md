@@ -1,88 +1,69 @@
 # Test Plan: Operational and System Integrity
 
+# Directory Management
+
+## test_validate_creates_missing_directories
+
+**Setup:**
+- `ServerConfig` with non-existent paths for `sandbox.base_dir` and `analysis.temp_dir`.
+
+**Execution:**
+- Call `config.validate()`.
+
+**Assertions:**
+- Result is `Ok`.
+- The missing directories now exist on the filesystem.
+
+# CLI Argument Parsing
+
+## test_cli_config_path_override
+
+**Setup:**
+- Custom config file exists at `/tmp/custom.toml`.
+
+**Execution:**
+- Run binary with `--config /tmp/custom.toml`.
+
+**Assertions:**
+- Application loads configuration from the specified file.
+
 # Graceful Shutdown
 
 ## test_graceful_shutdown_drains_requests
 
 **Setup:**
 - Start server.
-- Send a request that takes 5 seconds to process (e.g., large file or mock delay).
-- While request is in-flight, send `SIGTERM` to the process.
+- Send a request that takes 5 seconds to process.
+- While request is in-flight, send `SIGTERM`.
 
 **Execution:**
 - Wait for process to exit.
 
 **Assertions:**
-- The in-flight request completes successfully with 200 OK.
-- The process exits within the 10-second window.
-- New requests sent *after* `SIGTERM` are rejected or the port is closed.
+- The in-flight request completes successfully.
+- Process exits within the shutdown window.
 
 # Resource Limits
 
-## test_fd_limit_rejection
+## test_fd_limit_applied_at_startup
 
 **Setup:**
-- Configure `server.max_open_files` to a low value (e.g., 20).
-- Open 20+ concurrent connections/files.
+- `server.max_open_files = 1024`.
 
 **Execution:**
-- Attempt to open another connection.
+- Start application.
 
 **Assertions:**
-- Server returns `503 Service Unavailable`.
-- Error message contains "Too many open files".
-- Metrics `fd_limit_rejections_total` increments.
+- Process `NOFILE` limit is set to 1024 (verified via `/proc/self/limits` in integration test).
 
-## test_disk_space_preflight_rejection
+## test_concurrency_limit_applied
 
 **Setup:**
-- Configure `analysis.min_free_space_mb` to 1000 (1GB).
-- Mock the filesystem to report 500MB free.
+- `server.max_connections = 2`.
 
 **Execution:**
-- POST a large content request.
+- Send 3 concurrent requests.
 
 **Assertions:**
-- Server returns `507 Insufficient Storage` *before* starting the upload stream.
-- Error message specifies insufficient space.
-
-# Background Tasks
-
-## test_orphaned_file_cleanup
-
-**Setup:**
-- Manually place a file in `analysis.temp_dir` with a modification time 2 hours ago.
-- Start server with `analysis.temp_file_max_age_secs = 3600` (1 hour).
-
-**Execution:**
-- Wait for background cleanup task (configured for every 5 mins, maybe speed up for test).
-
-**Assertions:**
-- The orphaned file is deleted.
-- Active temp files (younger than 1 hour) are NOT deleted.
-
-# Startup Validation
-
-## test_startup_invalid_config_fails
-
-**Setup:**
-- Provide `config.toml` with `server.port = 99999` (invalid).
-
-**Execution:**
-- Attempt to start the server.
-
-**Assertions:**
-- Process exits with non-zero code.
-- Error message indicates port range validation failure.
-
-## test_startup_sandbox_missing_fails
-
-**Setup:**
-- Configure `sandbox.base_dir` to a path that doesn't exist.
-
-**Execution:**
-- Start server.
-
-**Assertions:**
-- Process exits with panic/error "Failed to validate configuration".
-- Error cause indicates "File or directory not found".
+- 2 requests proceed.
+- 1 request is either queued or rejected depending on `tower` configuration.

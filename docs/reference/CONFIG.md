@@ -84,7 +84,7 @@ Main server settings for network binding and connection management.
 #### `server.host`
 
 **Type:** String  
-**Default:** "0.0.0.0"  
+**Default:** "127.0.0.1"  
 **Environment:** `MAGICER_HOST`  
 **Description:** IP address to bind the HTTP server. Typical values are "0.0.0.0" to bind to all interfaces or "127.0.0.1" for local access only.
 

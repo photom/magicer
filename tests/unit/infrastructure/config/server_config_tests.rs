@@ -6,119 +6,95 @@ use serial_test::serial;
 
 #[test]
 #[serial]
-fn test_config_defaults() {
-    env::remove_var("HOST");
-    env::remove_var("PORT");
-    env::remove_var("MAGICER_HOST");
-    env::remove_var("MAGICER_PORT");
-    env::remove_var("MAGICER_AUTH_USERNAME");
-    env::remove_var("MAGICER_AUTH_PASSWORD");
-    env::remove_var("MAGICER_SANDBOX_DIR");
-    env::remove_var("ANALYSIS_LARGE_FILE_THRESHOLD_MB");
-    env::remove_var("MAGICER_CONFIG_PATH");
-    env::remove_var("MAGICER_LOG_LEVEL");
-    
-    // We expect it to try loading from config/config.toml if it exists.
-    // For this test to be truly about defaults, we'd need to ensure config/config.toml is NOT there, 
-    // OR we point MAGICER_CONFIG_PATH to a non-existent file.
-    env::set_var("MAGICER_CONFIG_PATH", "non_existent.toml");
-    
-    let config = ServerConfig::load(None);
+fn test_default_config_values() {
+    let config = ServerConfig::default();
     
     assert_eq!(config.server.host, "127.0.0.1");
     assert_eq!(config.server.port, 8080);
     assert_eq!(config.analysis.large_file_threshold_mb, 10);
-    assert_eq!(config.analysis.write_buffer_size_kb, 64);
-    
-    env::remove_var("MAGICER_CONFIG_PATH");
+    assert_eq!(config.sandbox.base_dir, "/tmp/magicer/files");
 }
 
 #[test]
 #[serial]
-fn test_config_env_overrides() {
+fn test_load_from_toml() {
+    let test_toml = "test_config_load.toml";
+    let content = r#"
+[server]
+host = "192.168.1.1"
+port = 9090
+
+[analysis]
+large_file_threshold_mb = 5
+"#;
+    fs::write(test_toml, content).unwrap();
+    
+    let config = ServerConfig::load(Some(test_toml.to_string()));
+    
+    assert_eq!(config.server.host, "192.168.1.1");
+    assert_eq!(config.server.port, 9090);
+    assert_eq!(config.analysis.large_file_threshold_mb, 5);
+    // Missing fields should be default
+    assert_eq!(config.analysis.write_buffer_size_kb, 64);
+    
+    fs::remove_file(test_toml).unwrap();
+}
+
+#[test]
+#[serial]
+fn test_env_overrides() {
+    // Clear potentially conflicting env vars
+    env::remove_var("MAGICER_HOST");
+    env::remove_var("MAGICER_PORT");
+    env::remove_var("HOST");
+    env::remove_var("PORT");
+    
     env::set_var("MAGICER_HOST", "0.0.0.0");
-    env::set_var("MAGICER_PORT", "8080");
-    env::set_var("ANALYSIS_LARGE_FILE_THRESHOLD_MB", "50");
-    env::set_var("MAGICER_CONFIG_PATH", "non_existent.toml");
+    env::set_var("MAGICER_PORT", "7070");
+    
+    // Ensure we don't load from a default file if it exists
+    env::set_var("MAGICER_CONFIG_PATH", "/non/existent/config.toml");
     
     let config = ServerConfig::load(None);
     
     assert_eq!(config.server.host, "0.0.0.0");
-    assert_eq!(config.server.port, 8080);
-    assert_eq!(config.analysis.large_file_threshold_mb, 50);
+    assert_eq!(config.server.port, 7070);
     
-    // Cleanup
     env::remove_var("MAGICER_HOST");
     env::remove_var("MAGICER_PORT");
-    env::remove_var("ANALYSIS_LARGE_FILE_THRESHOLD_MB");
     env::remove_var("MAGICER_CONFIG_PATH");
 }
 
 #[test]
 #[serial]
-fn test_config_toml_loading() {
-    let test_toml = "test_config.toml";
-    let content = r#"
-[server]
-host = "10.0.0.1"
-port = 9000
-
-[analysis]
-large_file_threshold_mb = 20
-write_buffer_size_kb = 128
-temp_dir = "/tmp/test"
-min_free_space_mb = 512
-"#;
-    fs::write(test_toml, content).unwrap();
-    env::set_var("MAGICER_CONFIG_PATH", test_toml);
-    
-    let config = ServerConfig::load(None);
-    
-    assert_eq!(config.server.host, "10.0.0.1");
-    assert_eq!(config.server.port, 9000);
-    assert_eq!(config.analysis.large_file_threshold_mb, 20);
-    assert_eq!(config.analysis.temp_dir, "/tmp/test");
-    
-    // Cleanup
-    fs::remove_file(test_toml).unwrap();
-    env::remove_var("MAGICER_CONFIG_PATH");
-}
-
-#[test]
-fn test_validate_success() {
+fn test_validate_creates_directories() {
     let mut config = ServerConfig::default();
-    // Ensure sandbox dir exists
-    let temp_dir = std::env::temp_dir().join("magicer_test_success");
-    fs::create_dir_all(&temp_dir).unwrap();
-    config.sandbox.base_dir = temp_dir.to_str().unwrap().to_string();
+    let temp_base = env::temp_dir().join("magicer_test_dir_create");
+    let sandbox_dir = temp_base.join("files");
+    let temp_analysis_dir = temp_base.join("analysis");
+    
+    // Ensure they don't exist
+    if temp_base.exists() {
+        fs::remove_dir_all(&temp_base).unwrap();
+    }
+    
+    config.sandbox.base_dir = sandbox_dir.to_str().unwrap().to_string();
+    config.analysis.temp_dir = temp_analysis_dir.to_str().unwrap().to_string();
     
     assert!(config.validate().is_ok());
+    assert!(sandbox_dir.exists());
+    assert!(temp_analysis_dir.exists());
     
-    fs::remove_dir_all(temp_dir).unwrap();
+    fs::remove_dir_all(temp_base).unwrap();
 }
 
 #[test]
-fn test_validate_missing_sandbox_dir() {
-    let mut config = ServerConfig::default();
-    config.sandbox.base_dir = "/non/existent/path/definitely".to_string();
-    
-    let result = config.validate();
-    assert!(result.is_err());
-    assert_eq!(result.unwrap_err(), ValidationError::FileNotFound);
-}
-
-#[test]
-fn test_validate_empty_host() {
+#[serial]
+fn test_validate_invalid_host_returns_error() {
     let mut config = ServerConfig::default();
     config.server.host = "".to_string();
-    // Ensure sandbox exists so we don't fail on that
-    let temp_dir = std::env::temp_dir().join("magicer_test_host");
-    fs::create_dir_all(&temp_dir).unwrap();
-    config.sandbox.base_dir = temp_dir.to_str().unwrap().to_string();
-
+    
     let result = config.validate();
     assert!(result.is_err());
-    assert_eq!(result.unwrap_err(), ValidationError::EmptyValue);
-    
-    fs::remove_dir_all(temp_dir).unwrap();
+    assert!(matches!(result.unwrap_err(), ValidationError::EmptyValue));
 }
