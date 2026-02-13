@@ -5,7 +5,6 @@ use crate::domain::value_objects::filename::WindowsCompatibleFilename;
 use crate::domain::value_objects::request_id::RequestId;
 use crate::infrastructure::config::server_config::ServerConfig;
 use crate::infrastructure::filesystem::mmap::MmapHandler;
-use crate::infrastructure::filesystem::temp_file_handler::TempFileHandler;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::time::timeout;
@@ -33,37 +32,40 @@ impl AnalyzeContentUseCase {
             ));
         }
 
-        let threshold = self.config.analysis.large_file_threshold_mb * 1024 * 1024;
         let timeout_secs = self.config.server.timeouts.analysis_timeout_secs;
 
-        let (mime_type, description) = if data.len() < threshold {
-            timeout(
-                Duration::from_secs(timeout_secs),
-                self.magic_repo.analyze_buffer(data, filename.as_str())
-            ).await
-            .map_err(|_| ApplicationError::InternalError("Analysis timed out".to_string()))??
-        } else {
-            let temp_dir = Path::new(&self.config.analysis.temp_dir);
-            let temp_file = TempFileHandler::create_temp_file(data, temp_dir).map_err(|e| {
-                ApplicationError::InternalError(format!("Failed to create temp file: {}", e))
+        let (mime_type, description) = timeout(
+            Duration::from_secs(timeout_secs),
+            self.magic_repo.analyze_buffer(data, filename.as_str())
+        ).await
+        .map_err(|_| ApplicationError::InternalError("Analysis timed out".to_string()))??;
+
+        Ok(MagicResult::new(
+            request_id,
+            filename,
+            mime_type,
+            description,
+        ))
+    }
+
+    pub async fn execute_from_file(
+        &self,
+        request_id: RequestId,
+        filename: WindowsCompatibleFilename,
+        path: &Path,
+    ) -> Result<MagicResult, ApplicationError> {
+        let timeout_secs = self.config.server.timeouts.analysis_timeout_secs;
+
+        let mmap =
+            MmapHandler::new(&std::fs::File::open(path).unwrap()).map_err(|e| {
+                ApplicationError::InternalError(format!("Failed to mmap temp file: {}", e))
             })?;
 
-            let mmap =
-                MmapHandler::new(&std::fs::File::open(temp_file.path()).unwrap()).map_err(|e| {
-                    ApplicationError::InternalError(format!("Failed to mmap temp file: {}", e))
-                })?;
-
-            let result = timeout(
-                Duration::from_secs(timeout_secs),
-                self.magic_repo.analyze_buffer(mmap.as_slice(), filename.as_str())
-            ).await;
-
-            // Cleanup happens on drop of temp_file and mmap
-            match result {
-                Ok(r) => r?,
-                Err(_) => return Err(ApplicationError::InternalError("Analysis timed out".to_string())),
-            }
-        };
+        let (mime_type, description) = timeout(
+            Duration::from_secs(timeout_secs),
+            self.magic_repo.analyze_buffer(mmap.as_slice(), filename.as_str())
+        ).await
+        .map_err(|_| ApplicationError::InternalError("Analysis timed out".to_string()))??;
 
         Ok(MagicResult::new(
             request_id,

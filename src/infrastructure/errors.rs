@@ -6,6 +6,7 @@ pub enum InfrastructureError {
     Io(io::Error),
     InvalidConfig(String),
     MaxRetriesExceeded(String),
+    Internal(String),
 }
 
 impl fmt::Display for InfrastructureError {
@@ -14,6 +15,7 @@ impl fmt::Display for InfrastructureError {
             Self::Io(err) => write!(f, "I/O error: {}", err),
             Self::InvalidConfig(msg) => write!(f, "Invalid configuration: {}", msg),
             Self::MaxRetriesExceeded(msg) => write!(f, "Max retries exceeded: {}", msg),
+            Self::Internal(msg) => write!(f, "Internal infrastructure error: {}", msg),
         }
     }
 }

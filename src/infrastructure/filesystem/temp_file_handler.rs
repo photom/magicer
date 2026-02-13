@@ -12,6 +12,52 @@ pub struct TempFileHandler {
 }
 
 impl TempFileHandler {
+    pub fn new_empty(base_dir: &Path) -> Result<Self, InfrastructureError> {
+        if !base_dir.exists() {
+            fs::create_dir_all(base_dir)?;
+        }
+
+        let mut retries = 0;
+        const MAX_RETRIES: u32 = 10;
+
+        loop {
+            let filename = Self::generate_unique_filename();
+            let path = base_dir.join(filename);
+
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(file) => {
+                    // Set permissions to 0600 on Unix
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let mut perms = file.metadata()?.permissions();
+                        perms.set_mode(0o600);
+                        fs::set_permissions(&path, perms)?;
+                    }
+
+                    return Ok(Self {
+                        path,
+                        cleaned_up: false,
+                    });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    retries += 1;
+                    if retries >= MAX_RETRIES {
+                        return Err(InfrastructureError::MaxRetriesExceeded(
+                            "Failed to generate unique temp filename".to_string(),
+                        ));
+                    }
+                    continue;
+                }
+                Err(e) => return Err(InfrastructureError::Io(e)),
+            }
+        }
+    }
+
     pub fn create_temp_file(data: &[u8], base_dir: &Path) -> Result<Self, InfrastructureError> {
         if !base_dir.exists() {
             fs::create_dir_all(base_dir)?;

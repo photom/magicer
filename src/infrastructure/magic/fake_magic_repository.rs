@@ -31,6 +31,12 @@ impl MagicRepository for FakeMagicRepository {
                     "PNG image data".to_string(),
                 ));
             }
+            if data.starts_with(b"#!/bin/sh") {
+                return Ok((
+                    MimeType::try_from("text/x-shellscript").unwrap(),
+                    "shell script".to_string(),
+                ));
+            }
             Ok((
                 MimeType::try_from("application/octet-stream").unwrap(),
                 "data".to_string(),
@@ -54,6 +60,12 @@ impl MagicRepository for FakeMagicRepository {
                 return Ok((
                     MimeType::try_from("image/png").unwrap(),
                     "PNG image data".to_string(),
+                ));
+            }
+            if data.starts_with(b"#!/bin/sh") {
+                return Ok((
+                    MimeType::try_from("text/x-shellscript").unwrap(),
+                    "shell script".to_string(),
                 ));
             }
             Ok((
