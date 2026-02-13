@@ -8,6 +8,7 @@ use magicer::presentation::http::middleware::{error_handler, request_id};
 use magicer::infrastructure::magic::fake_magic_repository::FakeMagicRepository;
 use magicer::infrastructure::filesystem::sandbox::PathSandbox;
 use crate::fake_auth::FakeAuth;
+use crate::fake_temp_storage::FakeTempStorageService;
 use tower::ServiceExt;
 use std::sync::Arc;
 use std::path::PathBuf;
@@ -17,9 +18,10 @@ use axum::middleware;
 async fn test_analyze_content_handler_success() {
     let magic_repo = Arc::new(FakeMagicRepository::new().unwrap());
     let sandbox = Arc::new(PathSandbox::new(PathBuf::from("/tmp")));
+    let temp_storage = Arc::new(FakeTempStorageService::new(PathBuf::from("/tmp")));
     let auth_service = Arc::new(FakeAuth);
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service, config));
+    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, config));
     let router = create_router(state)
         .layer(middleware::from_fn(error_handler::handle_error))
         .layer(middleware::from_fn(request_id::add_request_id));
@@ -48,13 +50,14 @@ async fn test_analyze_path_handler_success() {
     let temp_dir = "/tmp/magicer_unit_handlers";
     std::fs::create_dir_all(temp_dir).unwrap();
     let sandbox = Arc::new(PathSandbox::new(PathBuf::from(temp_dir)));
+    let temp_storage = Arc::new(FakeTempStorageService::new(PathBuf::from(temp_dir)));
     
     // Create file
     std::fs::write(PathBuf::from(temp_dir).join("test.pdf"), b"%PDF-1.4").unwrap();
 
     let auth_service = Arc::new(FakeAuth);
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service, config));
+    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, config));
     let router = create_router(state)
         .layer(middleware::from_fn(error_handler::handle_error))
         .layer(middleware::from_fn(request_id::add_request_id));
@@ -82,6 +85,7 @@ async fn test_analyze_path_handler_success() {
 async fn test_analyze_content_handler_large_file_streaming() {
     let magic_repo = Arc::new(FakeMagicRepository::new().unwrap());
     let sandbox = Arc::new(PathSandbox::new(PathBuf::from("/tmp")));
+    let temp_storage = Arc::new(FakeTempStorageService::new(PathBuf::from("/tmp")));
     let auth_service = Arc::new(FakeAuth);
     
     // Set threshold to 0 to force file-based handling
@@ -89,7 +93,7 @@ async fn test_analyze_content_handler_large_file_streaming() {
     config.analysis.large_file_threshold_mb = 0;
     let config = Arc::new(config);
     
-    let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service, config));
+    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, config));
     let router = create_router(state)
         .layer(middleware::from_fn(error_handler::handle_error))
         .layer(middleware::from_fn(request_id::add_request_id));

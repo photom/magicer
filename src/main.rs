@@ -54,6 +54,12 @@ async fn main() {
 
     let sandbox = Arc::new(PathSandbox::new(PathBuf::from(&config.sandbox.base_dir)));
 
+    let temp_storage = Arc::new(
+        magicer::infrastructure::filesystem::temp_storage_service::FsTempStorageService::new(
+            PathBuf::from(&config.analysis.temp_dir),
+        ),
+    );
+
     let auth_service = Arc::new(BasicAuthService::new(
         &config.auth.username,
         &config.auth.password,
@@ -67,6 +73,7 @@ async fn main() {
     let app_state = Arc::new(AppState::new(
         magic_repo,
         sandbox,
+        temp_storage,
         auth_service,
         Arc::new(config.clone()),
     ));

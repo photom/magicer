@@ -41,6 +41,7 @@ futures-util = "0.3"
 libloading = "0.8"
 rlimit = "0.10"
 socket2 = "0.5"
+async-trait = "0.1.89"
 
 [dev-dependencies]
 axum-test = "14.0"

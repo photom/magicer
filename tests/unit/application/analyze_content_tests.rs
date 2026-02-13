@@ -25,12 +25,24 @@ impl MagicRepository for FakeMagicRepo {
     }
 }
 
+use magicer::domain::services::temp_storage::{TempStorageService, TemporaryFile};
+use async_trait::async_trait;
+
+struct FakeTempStorage;
+
+#[async_trait]
+impl TempStorageService for FakeTempStorage {
+    async fn create_temp_file(&self) -> Result<Box<dyn TemporaryFile>, std::io::Error> {
+        unimplemented!("Not needed for basic analyze content tests")
+    }
+}
+
 #[tokio::test]
 async fn test_analyze_content_success() {
     let repo: Arc<dyn MagicRepository> = Arc::new(FakeMagicRepo);
+    let temp_storage: Arc<dyn TempStorageService> = Arc::new(FakeTempStorage);
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let timeout = config.server.timeouts.analysis_timeout_secs;
-    let use_case = AnalyzeContentUseCase::new(repo, timeout);
+    let use_case = AnalyzeContentUseCase::new(repo, temp_storage, config);
     let request_id = RequestId::generate();
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
     let data = b"%PDF-1.4";
@@ -44,9 +56,9 @@ async fn test_analyze_content_success() {
 #[tokio::test]
 async fn test_execute_from_file_success() {
     let repo: Arc<dyn MagicRepository> = Arc::new(FakeMagicRepo);
+    let temp_storage: Arc<dyn TempStorageService> = Arc::new(FakeTempStorage);
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let timeout = config.server.timeouts.analysis_timeout_secs;
-    let use_case = AnalyzeContentUseCase::new(repo, timeout);
+    let use_case = AnalyzeContentUseCase::new(repo, temp_storage, config);
     let request_id = RequestId::generate();
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
     
@@ -65,9 +77,9 @@ async fn test_execute_from_file_success() {
 #[tokio::test]
 async fn test_analyze_content_empty_rejected() {
     let repo: Arc<dyn MagicRepository> = Arc::new(FakeMagicRepo);
+    let temp_storage: Arc<dyn TempStorageService> = Arc::new(FakeTempStorage);
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let timeout = config.server.timeouts.analysis_timeout_secs;
-    let use_case = AnalyzeContentUseCase::new(repo, timeout);
+    let use_case = AnalyzeContentUseCase::new(repo, temp_storage, config);
     let request_id = RequestId::generate();
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
     let data = b"";
@@ -94,9 +106,9 @@ impl MagicRepository for FailingMagicRepo {
 #[tokio::test]
 async fn test_analyze_content_repository_failure() {
     let repo: Arc<dyn MagicRepository> = Arc::new(FailingMagicRepo);
+    let temp_storage: Arc<dyn TempStorageService> = Arc::new(FakeTempStorage);
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let timeout = config.server.timeouts.analysis_timeout_secs;
-    let use_case = AnalyzeContentUseCase::new(repo, timeout);
+    let use_case = AnalyzeContentUseCase::new(repo, temp_storage, config);
     let request_id = RequestId::generate();
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
     
@@ -125,8 +137,11 @@ impl MagicRepository for SlowMagicRepo {
 #[tokio::test]
 async fn test_analyze_content_timeout() {
     let repo: Arc<dyn MagicRepository> = Arc::new(SlowMagicRepo);
-    let timeout = 1; // 1 second timeout
-    let use_case = AnalyzeContentUseCase::new(repo, timeout);
+    let temp_storage: Arc<dyn TempStorageService> = Arc::new(FakeTempStorage);
+    let mut config_val = magicer::infrastructure::config::server_config::ServerConfig::default();
+    config_val.server.timeouts.analysis_timeout_secs = 1;
+    let config = Arc::new(config_val);
+    let use_case = AnalyzeContentUseCase::new(repo, temp_storage, config);
     let request_id = RequestId::generate();
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
     

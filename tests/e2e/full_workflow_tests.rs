@@ -7,20 +7,27 @@ use magicer::infrastructure::magic::fake_magic_repository::FakeMagicRepository;
 use magicer::infrastructure::filesystem::sandbox::PathSandbox;
 use magicer::infrastructure::auth::basic_auth_service::BasicAuthService;
 use magicer::infrastructure::config::server_config::ServerConfig;
+use crate::fake_temp_storage::FakeTempStorageService;
 use std::sync::Arc;
 use std::path::PathBuf;
 use axum::middleware;
 
 const TEST_SANDBOX_DIR: &str = "/tmp/magicer_e2e";
 
-fn setup_test_server(config_override: Option<Box<dyn FnOnce(&mut ServerConfig)>>) -> TestServer {
+use uuid::Uuid;
+
+fn setup_test_server(config_override: Option<Box<dyn FnOnce(&mut ServerConfig)>>) -> (TestServer, PathBuf) {
     let magic_repo = Arc::new(FakeMagicRepository::new().unwrap());
-    std::fs::create_dir_all(TEST_SANDBOX_DIR).unwrap();
-    let sandbox = Arc::new(PathSandbox::new(PathBuf::from(TEST_SANDBOX_DIR)));
+    let unique_id = Uuid::new_v4();
+    let test_dir = PathBuf::from(format!("{}/{}", TEST_SANDBOX_DIR, unique_id));
+    std::fs::create_dir_all(&test_dir).unwrap();
+    
+    let sandbox = Arc::new(PathSandbox::new(test_dir.clone()));
     let auth_service = Arc::new(BasicAuthService::new("admin", "secret"));
+    let temp_storage = Arc::new(FakeTempStorageService::new(test_dir.join("temp")));
     
     let mut config = ServerConfig::default();
-    config.sandbox.base_dir = TEST_SANDBOX_DIR.to_string();
+    config.sandbox.base_dir = test_dir.to_string_lossy().to_string();
     config.auth.username = "admin".to_string();
     config.auth.password = "secret".to_string();
     
@@ -28,16 +35,16 @@ fn setup_test_server(config_override: Option<Box<dyn FnOnce(&mut ServerConfig)>>
         f(&mut config);
     }
     
-    let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service, Arc::new(config)));
+    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, Arc::new(config)));
     let app = create_router(state)
         .layer(middleware::from_fn(error_handler::handle_error))
         .layer(middleware::from_fn(request_id::add_request_id));
-    TestServer::new(app).unwrap()
+    (TestServer::new(app).unwrap(), test_dir)
 }
 
 #[tokio::test]
 async fn test_ping_endpoint() {
-    let server = setup_test_server(None);
+    let (server, _) = setup_test_server(None);
     let response = server.get("/v1/ping").await;
     response.assert_status_ok();
     let json = response.json::<serde_json::Value>();
@@ -47,7 +54,7 @@ async fn test_ping_endpoint() {
 
 #[tokio::test]
 async fn test_content_analysis_success() {
-    let server = setup_test_server(None);
+    let (server, _) = setup_test_server(None);
     let response = server
         .post("/v1/magic/content")
         .add_query_param("filename", "test.pdf")
@@ -63,7 +70,7 @@ async fn test_content_analysis_success() {
 #[tokio::test]
 async fn test_analyze_content_large_file_success() {
     // Set threshold to 0 to force temp file path
-    let server = setup_test_server(Some(Box::new(|config| {
+    let (server, _) = setup_test_server(Some(Box::new(|config| {
         config.analysis.large_file_threshold_mb = 0;
     })));
     
@@ -81,10 +88,10 @@ async fn test_analyze_content_large_file_success() {
 
 #[tokio::test]
 async fn test_path_analysis_success() {
-    let server = setup_test_server(None);
+    let (server, test_dir) = setup_test_server(None);
     
     // Setup file in sandbox
-    let file_path = PathBuf::from(TEST_SANDBOX_DIR).join("test.png");
+    let file_path = test_dir.join("test.png");
     std::fs::write(&file_path, b"\x89PNG\r\n\x1a\n").unwrap();
 
     let response = server
@@ -101,7 +108,7 @@ async fn test_path_analysis_success() {
 
 #[tokio::test]
 async fn test_analyze_path_not_found() {
-    let server = setup_test_server(None);
+    let (server, _) = setup_test_server(None);
     
     let response = server
         .post("/v1/magic/path")
@@ -117,14 +124,14 @@ async fn test_analyze_path_not_found() {
 
 #[tokio::test]
 async fn test_auth_required_rejection() {
-    let server = setup_test_server(None);
+    let (server, _) = setup_test_server(None);
     let response = server.post("/v1/magic/content").add_query_param("filename", "test.pdf").await;
     response.assert_status_unauthorized();
 }
 
 #[tokio::test]
 async fn test_invalid_filename_rejection() {
-    let server = setup_test_server(None);
+    let (server, _) = setup_test_server(None);
     let response = server
         .post("/v1/magic/content")
         .add_query_param("filename", "bad/name.txt")
@@ -136,7 +143,7 @@ async fn test_invalid_filename_rejection() {
 
 #[tokio::test]
 async fn test_path_traversal_rejection() {
-    let server = setup_test_server(None);
+    let (server, _) = setup_test_server(None);
     let response = server
         .post("/v1/magic/path")
         .add_query_param("filename", "etc")

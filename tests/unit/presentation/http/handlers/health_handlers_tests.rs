@@ -8,7 +8,9 @@ use magicer::presentation::http::middleware::{error_handler, request_id};
 use magicer::infrastructure::magic::fake_magic_repository::FakeMagicRepository;
 use magicer::infrastructure::filesystem::sandbox::PathSandbox;
 use crate::fake_auth::FakeAuth;
-use tower::ServiceExt; 
+use crate::fake_temp_storage::FakeTempStorageService;
+use tower::ServiceExt;
+ 
 use std::sync::Arc;
 use std::path::PathBuf;
 use axum::middleware;
@@ -17,9 +19,10 @@ use axum::middleware;
 async fn test_ping_handler() {
     let magic_repo = Arc::new(FakeMagicRepository::new().unwrap());
     let sandbox = Arc::new(PathSandbox::new(PathBuf::from("/tmp")));
+    let temp_storage = Arc::new(FakeTempStorageService::new(PathBuf::from("/tmp")));
     let auth_service = Arc::new(FakeAuth);
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service, config));
+    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, config));
     let router = create_router(state)
         .layer(middleware::from_fn(error_handler::handle_error))
         .layer(middleware::from_fn(request_id::add_request_id));

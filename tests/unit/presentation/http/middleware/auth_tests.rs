@@ -34,11 +34,14 @@ impl AuthenticationService for FakeAuthService {
     }
 }
 
+use crate::fake_temp_storage::FakeTempStorageService;
+
 async fn build_app(auth_service: Arc<dyn AuthenticationService>) -> Router {
     let magic_repo = Arc::new(FakeMagicRepository::new().unwrap());
     let sandbox = Arc::new(PathSandbox::new(PathBuf::from("/tmp")));
+    let temp_storage = Arc::new(FakeTempStorageService::new(PathBuf::from("/tmp")));
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service, config));
+    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, config));
     
     Router::new()
         .route("/", get(|| async { StatusCode::OK }))

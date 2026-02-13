@@ -13,6 +13,7 @@ globs:
 All code must strictly comply with the Rust Compiler Development Guide conventions:
 
 ## **Reference**
+- https://doc.rust-lang.org/edition-guide/rust-2024/index.html
 - https://rustc-dev-guide.rust-lang.org/conventions.html
 - https://rust-unofficial.github.io/patterns/
 
