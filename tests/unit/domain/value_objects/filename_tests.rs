@@ -53,12 +53,11 @@ fn test_new_with_unicode_name_returns_success() {
 }
 
 #[test]
-fn test_new_with_reserved_characters_returns_error() {
+fn test_new_with_windows_reserved_characters_returns_success() {
     let reserved = ['\\', ':', '*', '?', '"', '<', '>', '|'];
     for &c in &reserved {
         let name = format!("file{}.txt", c);
         let filename = WindowsCompatibleFilename::new(&name);
-        assert!(filename.is_err(), "Should reject character: {}", c);
-        assert_eq!(filename.unwrap_err(), ValidationError::InvalidCharacter);
+        assert!(filename.is_ok(), "Should accept character: {}", c);
     }
 }

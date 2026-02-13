@@ -11,6 +11,8 @@ use magicer::domain::value_objects::mime_type::MimeType;
 use magicer::domain::errors::{MagicError, ValidationError};
 use magicer::application::errors::ApplicationError;
 
+use magicer::infrastructure::config::server_config::ServerConfig;
+
 struct FakeMagicRepo;
 impl MagicRepository for FakeMagicRepo {
     fn analyze_buffer<'a>(&'a self, _data: &'a [u8], _filename: &'a str) -> BoxFuture<'a, Result<(MimeType, String), MagicError>> {
@@ -34,7 +36,8 @@ impl SandboxService for FakeSandbox {
 async fn test_analyze_path_success() {
     let repo: Arc<dyn MagicRepository> = Arc::new(FakeMagicRepo);
     let sandbox: Arc<dyn SandboxService> = Arc::new(FakeSandbox);
-    let use_case = AnalyzePathUseCase::new(repo, sandbox);
+    let config = Arc::new(ServerConfig::default());
+    let use_case = AnalyzePathUseCase::new(repo, sandbox, config);
     let request_id = RequestId::generate();
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
     let path = RelativePath::new("uploads/test.pdf").unwrap();
@@ -56,7 +59,8 @@ impl SandboxService for BoundaryViolatingSandbox {
 async fn test_analyze_path_outside_sandbox_rejected() {
     let repo: Arc<dyn MagicRepository> = Arc::new(FakeMagicRepo);
     let sandbox: Arc<dyn SandboxService> = Arc::new(BoundaryViolatingSandbox);
-    let use_case = AnalyzePathUseCase::new(repo, sandbox);
+    let config = Arc::new(ServerConfig::default());
+    let use_case = AnalyzePathUseCase::new(repo, sandbox, config);
     let request_id = RequestId::generate();
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
     let path = RelativePath::new("test.pdf").unwrap();
@@ -77,7 +81,8 @@ impl SandboxService for NotFoundSandbox {
 async fn test_analyze_path_not_found() {
     let repo: Arc<dyn MagicRepository> = Arc::new(FailingMagicRepo);
     let sandbox: Arc<dyn SandboxService> = Arc::new(NotFoundSandbox);
-    let use_case = AnalyzePathUseCase::new(repo, sandbox);
+    let config = Arc::new(ServerConfig::default());
+    let use_case = AnalyzePathUseCase::new(repo, sandbox, config);
     let request_id = RequestId::generate();
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
     let path = RelativePath::new("missing.pdf").unwrap();

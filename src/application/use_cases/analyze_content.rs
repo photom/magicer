@@ -8,6 +8,8 @@ use crate::infrastructure::filesystem::mmap::MmapHandler;
 use crate::infrastructure::filesystem::temp_file_handler::TempFileHandler;
 use std::path::Path;
 use std::sync::Arc;
+use tokio::time::timeout;
+use std::time::Duration;
 
 pub struct AnalyzeContentUseCase {
     magic_repo: Arc<dyn MagicRepository>,
@@ -32,11 +34,14 @@ impl AnalyzeContentUseCase {
         }
 
         let threshold = self.config.analysis.large_file_threshold_mb * 1024 * 1024;
+        let timeout_secs = self.config.server.timeouts.analysis_timeout_secs;
 
         let (mime_type, description) = if data.len() < threshold {
-            self.magic_repo
-                .analyze_buffer(data, filename.as_str())
-                .await?
+            timeout(
+                Duration::from_secs(timeout_secs),
+                self.magic_repo.analyze_buffer(data, filename.as_str())
+            ).await
+            .map_err(|_| ApplicationError::InternalError("Analysis timed out".to_string()))??
         } else {
             let temp_dir = Path::new(&self.config.analysis.temp_dir);
             let temp_file = TempFileHandler::create_temp_file(data, temp_dir).map_err(|e| {
@@ -48,13 +53,16 @@ impl AnalyzeContentUseCase {
                     ApplicationError::InternalError(format!("Failed to mmap temp file: {}", e))
                 })?;
 
-            let result = self
-                .magic_repo
-                .analyze_buffer(mmap.as_slice(), filename.as_str())
-                .await;
+            let result = timeout(
+                Duration::from_secs(timeout_secs),
+                self.magic_repo.analyze_buffer(mmap.as_slice(), filename.as_str())
+            ).await;
 
             // Cleanup happens on drop of temp_file and mmap
-            result?
+            match result {
+                Ok(r) => r?,
+                Err(_) => return Err(ApplicationError::InternalError("Analysis timed out".to_string())),
+            }
         };
 
         Ok(MagicResult::new(

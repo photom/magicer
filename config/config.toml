@@ -3,9 +3,14 @@
 [server]
 host = "127.0.0.1"
 port = 3000
+max_body_size_mb = 20
 
 [analysis]
-large_file_threshold_mb = 10
+large_file_threshold_mb = 1
 write_buffer_size_kb = 64
 temp_dir = "/tmp/magicer"
 min_free_space_mb = 1024
+
+[auth]
+username = "hoge"
+password = "hoge"

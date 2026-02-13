@@ -14,8 +14,7 @@ impl WindowsCompatibleFilename {
             return Err(ValidationError::ExceedsMaxLength);
         }
 
-        let reserved = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\0'];
-        if filename.chars().any(|c| reserved.contains(&c)) {
+        if filename.chars().any(|c| c == '/' || c == '\0') {
             return Err(ValidationError::InvalidCharacter);
         }
 

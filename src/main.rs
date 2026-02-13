@@ -1,4 +1,4 @@
-use axum::middleware;
+use axum::{middleware, extract::DefaultBodyLimit};
 use clap::Parser;
 use magicer::infrastructure::auth::basic_auth_service::BasicAuthService;
 use magicer::infrastructure::config::server_config::ServerConfig;
@@ -9,6 +9,9 @@ use magicer::presentation::state::app_state::AppState;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tower::limit::concurrency::ConcurrencyLimitLayer;
+use tower_http::timeout::TimeoutLayer;
+use std::time::Duration;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -31,6 +34,11 @@ async fn main() {
     config.validate().expect("Failed to validate configuration");
     tracing::info!("Server configuration loaded: {:?}", config);
 
+    // Apply max_open_files limit
+    if let Err(e) = rlimit::setrlimit(rlimit::Resource::NOFILE, config.server.max_open_files as u64, config.server.max_open_files as u64) {
+        tracing::warn!("Failed to set max_open_files limit: {}", e);
+    }
+
     // Initialize infrastructure
     // Use real LibmagicRepository built from source
     let magic_repo = Arc::new(
@@ -47,24 +55,42 @@ async fn main() {
 
     // Address to bind to
     let addr = format!("{}:{}", config.server.host, config.server.port);
+    let socket_addr: std::net::SocketAddr = addr.parse().expect("Invalid bind address");
 
     // Initialize application state
     let app_state = Arc::new(AppState::new(
         magic_repo,
         sandbox,
         auth_service,
-        Arc::new(config),
+        Arc::new(config.clone()),
     ));
 
-    // Build router with middleware
+    // Build router with middleware and limits
     let app = create_router(app_state)
         .layer(middleware::from_fn(
             magicer::presentation::http::middleware::error_handler::handle_error,
         ))
-        .layer(middleware::from_fn(request_id::add_request_id));
+        .layer(middleware::from_fn(request_id::add_request_id))
+        .layer(ConcurrencyLimitLayer::new(config.server.max_connections as usize))
+        .layer(DefaultBodyLimit::max((config.server.limits.max_body_size_mb * 1024 * 1024) as usize))
+        .layer(TimeoutLayer::new(Duration::from_secs(config.server.timeouts.read_timeout_secs)));
 
-    let listener = TcpListener::bind(&addr).await.unwrap();
-    tracing::info!("Listening on {}", addr);
+    // Create a TCP listener with custom backlog
+    let socket = socket2::Socket::new(
+        socket2::Domain::for_address(socket_addr),
+        socket2::Type::STREAM,
+        Some(socket2::Protocol::TCP),
+    ).unwrap();
+    
+    socket.set_reuse_address(true).unwrap();
+    socket.bind(&socket_addr.into()).unwrap();
+    socket.listen(config.server.backlog as i32).unwrap();
+    
+    let std_listener: std::net::TcpListener = socket.into();
+    std_listener.set_nonblocking(true).unwrap();
+    let listener = TcpListener::from_std(std_listener).unwrap();
+    
+    tracing::info!("Listening on {} (backlog: {})", addr, config.server.backlog);
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())

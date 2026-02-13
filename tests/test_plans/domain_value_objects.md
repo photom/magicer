@@ -83,7 +83,7 @@
 - Result is `Ok`
 - `as_str()` returns original string
 
-## test_new_with_reserved_characters_returns_error
+## test_new_with_windows_reserved_characters_returns_success
 
 **Setup:**
 - Filename containing Windows reserved characters (\, :, *, ?, ", <, >, |)
@@ -92,8 +92,7 @@
 - Call `WindowsCompatibleFilename::new(reserved_name)`
 
 **Assertions:**
-- Result is `Err`
-- Error variant matches `ValidationError::InvalidCharacter`
+- Result is `Ok`
 
 # Test Plan: RelativePath
 

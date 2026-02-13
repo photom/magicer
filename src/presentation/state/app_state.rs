@@ -27,7 +27,7 @@ impl AppState {
                 magic_repo.clone(),
                 config.clone(),
             ),
-            analyze_path_use_case: AnalyzePathUseCase::new(magic_repo, sandbox),
+            analyze_path_use_case: AnalyzePathUseCase::new(magic_repo, sandbox, config.clone()),
             health_check_use_case: HealthCheckUseCase::new(),
             auth_service,
             config,
