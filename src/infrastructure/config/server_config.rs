@@ -1,8 +1,8 @@
+use crate::domain::errors::ValidationError;
 use serde::Deserialize;
 use std::env;
 use std::fs;
 use std::path::Path;
-use crate::domain::errors::ValidationError;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct ServerConfig {
@@ -38,11 +38,21 @@ pub struct ServerSection {
     pub limits: LimitConfig,
 }
 
-fn default_host() -> String { "127.0.0.1".to_string() }
-fn default_port() -> u16 { 8080 }
-fn default_max_connections() -> u32 { 1000 }
-fn default_backlog() -> u32 { 1024 }
-fn default_max_open_files() -> u32 { 4096 }
+fn default_host() -> String {
+    "127.0.0.1".to_string()
+}
+fn default_port() -> u16 {
+    8080
+}
+fn default_max_connections() -> u32 {
+    1000
+}
+fn default_backlog() -> u32 {
+    1024
+}
+fn default_max_open_files() -> u32 {
+    4096
+}
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct TimeoutConfig {
@@ -56,10 +66,18 @@ pub struct TimeoutConfig {
     pub keepalive_secs: u64,
 }
 
-fn default_read_timeout() -> u64 { 60 }
-fn default_write_timeout() -> u64 { 60 }
-fn default_analysis_timeout() -> u64 { 30 }
-fn default_keepalive() -> u64 { 75 }
+fn default_read_timeout() -> u64 {
+    60
+}
+fn default_write_timeout() -> u64 {
+    60
+}
+fn default_analysis_timeout() -> u64 {
+    30
+}
+fn default_keepalive() -> u64 {
+    75
+}
 
 impl Default for TimeoutConfig {
     fn default() -> Self {
@@ -82,9 +100,15 @@ pub struct LimitConfig {
     pub max_header_size: usize,
 }
 
-fn default_max_body_size() -> u64 { 100 }
-fn default_max_uri_length() -> usize { 8192 }
-fn default_max_header_size() -> usize { 16384 }
+fn default_max_body_size() -> u64 {
+    100
+}
+fn default_max_uri_length() -> usize {
+    8192
+}
+fn default_max_header_size() -> usize {
+    16384
+}
 
 impl Default for LimitConfig {
     fn default() -> Self {
@@ -112,12 +136,24 @@ pub struct AnalysisConfig {
     pub mmap_fallback_enabled: bool,
 }
 
-fn default_threshold() -> usize { 10 }
-fn default_buffer_size() -> usize { 64 }
-fn default_temp_dir() -> String { "/tmp/magicer".to_string() }
-fn default_min_free_space() -> u64 { 1024 }
-fn default_max_age() -> u64 { 3600 }
-fn default_mmap_fallback() -> bool { true }
+fn default_threshold() -> usize {
+    10
+}
+fn default_buffer_size() -> usize {
+    64
+}
+fn default_temp_dir() -> String {
+    "/tmp/magicer".to_string()
+}
+fn default_min_free_space() -> u64 {
+    1024
+}
+fn default_max_age() -> u64 {
+    3600
+}
+fn default_mmap_fallback() -> bool {
+    true
+}
 
 impl Default for AnalysisConfig {
     fn default() -> Self {
@@ -138,7 +174,9 @@ pub struct SandboxConfig {
     pub base_dir: String,
 }
 
-fn default_sandbox_dir() -> String { "/tmp/magicer/files".to_string() }
+fn default_sandbox_dir() -> String {
+    "/tmp/magicer/files".to_string()
+}
 
 impl Default for SandboxConfig {
     fn default() -> Self {
@@ -187,8 +225,12 @@ pub struct LoggingConfig {
     pub format: String,
 }
 
-fn default_log_level() -> String { "info".to_string() }
-fn default_log_format() -> String { "json".to_string() }
+fn default_log_level() -> String {
+    "info".to_string()
+}
+fn default_log_format() -> String {
+    "json".to_string()
+}
 
 impl Default for LoggingConfig {
     fn default() -> Self {
@@ -240,14 +282,14 @@ impl ServerConfig {
         if self.server.host.is_empty() {
             return Err(ValidationError::EmptyValue);
         }
-        
+
         // Ensure directories exist instead of just failing
         if let Err(_) = fs::create_dir_all(&self.sandbox.base_dir) {
             if !Path::new(&self.sandbox.base_dir).exists() {
                 return Err(ValidationError::FileNotFound);
             }
         }
-        
+
         if let Err(_) = fs::create_dir_all(&self.analysis.temp_dir) {
             if !Path::new(&self.analysis.temp_dir).exists() {
                 return Err(ValidationError::FileNotFound);
@@ -262,7 +304,8 @@ impl ServerConfig {
     }
 
     fn load_from_toml(config_path: Option<String>) -> Option<Self> {
-        let path = config_path.or_else(|| env::var("MAGICER_CONFIG_PATH").ok())
+        let path = config_path
+            .or_else(|| env::var("MAGICER_CONFIG_PATH").ok())
             .unwrap_or_else(|| "config/config.toml".to_string());
 
         fs::read_to_string(path)

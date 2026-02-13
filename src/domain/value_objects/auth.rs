@@ -32,7 +32,7 @@ impl BasicAuthCredentials {
     pub fn verify(&self, username: &str, password: &str) -> bool {
         let u_match = self.username.as_bytes().ct_eq(username.as_bytes());
         let p_match = self.password.as_bytes().ct_eq(password.as_bytes());
-        
+
         (u_match & p_match).into()
     }
 }

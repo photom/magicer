@@ -1,5 +1,5 @@
-pub mod value_objects;
 pub mod entities;
+pub mod errors;
 pub mod repositories;
 pub mod services;
-pub mod errors;
+pub mod value_objects;

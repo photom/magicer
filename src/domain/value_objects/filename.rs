@@ -13,12 +13,12 @@ impl WindowsCompatibleFilename {
         if filename.len() > MAX_LENGTH {
             return Err(ValidationError::ExceedsMaxLength);
         }
-        
+
         let reserved = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\0'];
         if filename.chars().any(|c| reserved.contains(&c)) {
             return Err(ValidationError::InvalidCharacter);
         }
-        
+
         Ok(Self(filename.to_string()))
     }
 

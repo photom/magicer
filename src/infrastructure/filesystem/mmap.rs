@@ -1,8 +1,8 @@
+use crate::infrastructure::errors::InfrastructureError;
 use std::fs::File;
 use std::os::unix::io::AsRawFd;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use crate::infrastructure::errors::InfrastructureError;
 
 static SIGBUS_OCCURRED: AtomicBool = AtomicBool::new(false);
 

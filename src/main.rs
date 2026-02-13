@@ -1,14 +1,14 @@
-use std::sync::Arc;
-use std::path::PathBuf;
 use axum::middleware;
-use tokio::net::TcpListener;
 use clap::Parser;
-use magicer::presentation::state::app_state::AppState;
-use magicer::presentation::http::router::create_router;
-use magicer::presentation::http::middleware::request_id;
+use magicer::infrastructure::auth::basic_auth_service::BasicAuthService;
 use magicer::infrastructure::config::server_config::ServerConfig;
 use magicer::infrastructure::filesystem::sandbox::PathSandbox;
-use magicer::infrastructure::auth::basic_auth_service::BasicAuthService;
+use magicer::presentation::http::middleware::request_id;
+use magicer::presentation::http::router::create_router;
+use magicer::presentation::state::app_state::AppState;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::net::TcpListener;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -33,22 +33,34 @@ async fn main() {
 
     // Initialize infrastructure
     // Use real LibmagicRepository built from source
-    let magic_repo = Arc::new(magicer::infrastructure::magic::libmagic_repository::LibmagicRepository::new()
-        .expect("Failed to initialize real libmagic repository"));
-    
+    let magic_repo = Arc::new(
+        magicer::infrastructure::magic::libmagic_repository::LibmagicRepository::new()
+            .expect("Failed to initialize real libmagic repository"),
+    );
+
     let sandbox = Arc::new(PathSandbox::new(PathBuf::from(&config.sandbox.base_dir)));
-    
-    let auth_service = Arc::new(BasicAuthService::new(&config.auth.username, &config.auth.password));
+
+    let auth_service = Arc::new(BasicAuthService::new(
+        &config.auth.username,
+        &config.auth.password,
+    ));
 
     // Address to bind to
     let addr = format!("{}:{}", config.server.host, config.server.port);
 
     // Initialize application state
-    let app_state = Arc::new(AppState::new(magic_repo, sandbox, auth_service, Arc::new(config)));
+    let app_state = Arc::new(AppState::new(
+        magic_repo,
+        sandbox,
+        auth_service,
+        Arc::new(config),
+    ));
 
     // Build router with middleware
     let app = create_router(app_state)
-        .layer(middleware::from_fn(magicer::presentation::http::middleware::error_handler::handle_error))
+        .layer(middleware::from_fn(
+            magicer::presentation::http::middleware::error_handler::handle_error,
+        ))
         .layer(middleware::from_fn(request_id::add_request_id));
 
     let listener = TcpListener::bind(&addr).await.unwrap();

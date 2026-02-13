@@ -1,5 +1,5 @@
-use serde::Serialize;
 use crate::domain::entities::magic_result::MagicResult;
+use serde::Serialize;
 
 #[derive(Serialize)]
 pub struct MagicResponse {

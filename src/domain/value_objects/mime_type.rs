@@ -15,7 +15,7 @@ impl MimeType {
         if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
             return Err(ValidationError::InvalidCharacter);
         }
-        
+
         Ok(Self {
             type_part: parts[0].to_string(),
             subtype_part: parts[1].to_string(),

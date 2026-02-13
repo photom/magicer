@@ -1,8 +1,8 @@
-use uuid::Uuid;
-use chrono::{DateTime, Utc};
-use crate::domain::value_objects::request_id::RequestId;
 use crate::domain::value_objects::filename::WindowsCompatibleFilename;
 use crate::domain::value_objects::mime_type::MimeType;
+use crate::domain::value_objects::request_id::RequestId;
+use chrono::{DateTime, Utc};
+use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct MagicResult {

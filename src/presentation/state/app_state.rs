@@ -1,11 +1,11 @@
-use std::sync::Arc;
 use crate::application::use_cases::analyze_content::AnalyzeContentUseCase;
 use crate::application::use_cases::analyze_path::AnalyzePathUseCase;
 use crate::application::use_cases::health_check::HealthCheckUseCase;
 use crate::domain::repositories::magic_repository::MagicRepository;
-use crate::domain::services::sandbox_service::SandboxService;
 use crate::domain::services::authentication_service::AuthenticationService;
+use crate::domain::services::sandbox_service::SandboxService;
 use crate::infrastructure::config::server_config::ServerConfig;
+use std::sync::Arc;
 
 pub struct AppState {
     pub analyze_content_use_case: AnalyzeContentUseCase,
@@ -23,7 +23,10 @@ impl AppState {
         config: Arc<ServerConfig>,
     ) -> Self {
         Self {
-            analyze_content_use_case: AnalyzeContentUseCase::new(magic_repo.clone(), config.clone()),
+            analyze_content_use_case: AnalyzeContentUseCase::new(
+                magic_repo.clone(),
+                config.clone(),
+            ),
             analyze_path_use_case: AnalyzePathUseCase::new(magic_repo, sandbox),
             health_check_use_case: HealthCheckUseCase::new(),
             auth_service,

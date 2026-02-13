@@ -1,7 +1,7 @@
-use futures_util::future::BoxFuture;
 use crate::domain::errors::AuthenticationError;
 use crate::domain::services::authentication_service::AuthenticationService;
 use crate::domain::value_objects::auth::BasicAuthCredentials;
+use futures_util::future::BoxFuture;
 use subtle::ConstantTimeEq;
 
 pub struct BasicAuthService {
@@ -19,10 +19,19 @@ impl BasicAuthService {
 }
 
 impl AuthenticationService for BasicAuthService {
-    fn verify_credentials<'a>(&'a self, credentials: &'a BasicAuthCredentials) -> BoxFuture<'a, Result<(), AuthenticationError>> {
+    fn verify_credentials<'a>(
+        &'a self,
+        credentials: &'a BasicAuthCredentials,
+    ) -> BoxFuture<'a, Result<(), AuthenticationError>> {
         Box::pin(async move {
-            let username_matches = self.expected_username.as_bytes().ct_eq(credentials.username().as_bytes());
-            let password_matches = self.expected_password.as_bytes().ct_eq(credentials.password().as_bytes());
+            let username_matches = self
+                .expected_username
+                .as_bytes()
+                .ct_eq(credentials.username().as_bytes());
+            let password_matches = self
+                .expected_password
+                .as_bytes()
+                .ct_eq(credentials.password().as_bytes());
 
             if (username_matches & password_matches).into() {
                 Ok(())

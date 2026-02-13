@@ -1,5 +1,5 @@
-use uuid::Uuid;
 use crate::domain::errors::ValidationError;
+use uuid::Uuid;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct RequestId(String);

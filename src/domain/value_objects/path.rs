@@ -14,7 +14,7 @@ impl RelativePath {
         if path.contains("//") {
             return Err(ValidationError::InvalidPath);
         }
-        
+
         let parts: Vec<&str> = path.split('/').collect();
         if parts.iter().any(|&p| p == "..") {
             return Err(ValidationError::PathTraversal);
@@ -22,7 +22,7 @@ impl RelativePath {
         if parts.iter().any(|&p| p == ".") {
             return Err(ValidationError::InvalidPath);
         }
-        
+
         Ok(Self(path.to_string()))
     }
 

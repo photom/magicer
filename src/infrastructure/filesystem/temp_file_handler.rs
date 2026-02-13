@@ -1,10 +1,10 @@
+use crate::infrastructure::errors::InfrastructureError;
+use rand::{distributions::Alphanumeric, Rng};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
-use rand::{distributions::Alphanumeric, Rng};
-use crate::infrastructure::errors::InfrastructureError;
 
 pub struct TempFileHandler {
     path: PathBuf,
@@ -32,7 +32,7 @@ impl TempFileHandler {
                 Ok(mut file) => {
                     file.write_all(data)?;
                     file.sync_all()?;
-                    
+
                     // Set permissions to 0600 on Unix
                     #[cfg(unix)]
                     {
