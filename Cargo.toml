@@ -7,7 +7,7 @@ description = "Linux File Magic API Server"
 
 [dependencies]
 # Web Framework
-axum = { version = "0.7", features = ["macros"] }
+axum = { version = "0.8.8", features = ["macros"] }
 tower = { version = "0.5", features = ["full"] }
 tower-http = { version = "0.6", features = ["full"] }
 
@@ -42,7 +42,7 @@ socket2 = "0.6.2"
 async-trait = "0.1"
 
 [dev-dependencies]
-axum-test = "14.0"
+axum-test = "18.7.0"
 criterion = { version = "0.8.2", features = ["async_tokio"] }
 tokio-test = "0.4"
 tempfile = "3.15"
