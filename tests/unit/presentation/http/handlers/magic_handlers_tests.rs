@@ -77,3 +77,37 @@ async fn test_analyze_path_handler_success() {
     let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
     assert_eq!(json["result"]["mime_type"], "application/pdf");
 }
+
+#[tokio::test]
+async fn test_analyze_content_handler_large_file_streaming() {
+    let magic_repo = Arc::new(FakeMagicRepository::new().unwrap());
+    let sandbox = Arc::new(PathSandbox::new(PathBuf::from("/tmp")));
+    let auth_service = Arc::new(FakeAuth);
+    
+    // Set threshold to 0 to force file-based handling
+    let mut config = magicer::infrastructure::config::server_config::ServerConfig::default();
+    config.analysis.large_file_threshold_mb = 0;
+    let config = Arc::new(config);
+    
+    let state = Arc::new(AppState::new(magic_repo, sandbox, auth_service, config));
+    let router = create_router(state)
+        .layer(middleware::from_fn(error_handler::handle_error))
+        .layer(middleware::from_fn(request_id::add_request_id));
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/magic/content?filename=test.sh")
+                .header("Authorization", "Basic YWRtaW46c2VjcmV0")
+                .body(Body::from("#!/bin/sh\necho hello"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(json["result"]["mime_type"], "text/x-shellscript");
+}

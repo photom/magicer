@@ -67,3 +67,45 @@
 **Assertions:**
 - 2 requests proceed.
 - 1 request is either queued or rejected depending on `tower` configuration.
+
+# Background Tasks
+
+## test_orphaned_file_cleanup
+
+**Setup:**
+- Manually place a file in `analysis.temp_dir` with a modification time older than `temp_file_max_age_secs`.
+
+**Execution:**
+- Wait for background cleanup task to run.
+
+**Assertions:**
+- The orphaned file is deleted.
+- Newer files are preserved.
+
+# Resource Limits
+
+## test_disk_space_preflight_rejection
+
+**Setup:**
+- Configure `analysis.min_free_space_mb` to a value higher than available disk space.
+
+**Execution:**
+- POST a content analysis request that triggers file-based handling.
+
+**Assertions:**
+- Server returns `507 Insufficient Storage` before processing the body.
+- Error message specifies insufficient disk space.
+
+# Analysis Robustness
+
+## test_mmap_fallback_to_buffer
+
+**Setup:**
+- `analysis.mmap_fallback_enabled = true`.
+- Trigger a scenario where `mmap` fails (e.g. mock failure).
+
+**Execution:**
+- Perform content analysis.
+
+**Assertions:**
+- Analysis succeeds by falling back to traditional buffer-based reading.

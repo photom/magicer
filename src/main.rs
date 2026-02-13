@@ -1,4 +1,4 @@
-use axum::{middleware, extract::DefaultBodyLimit};
+use axum::{extract::DefaultBodyLimit, middleware};
 use clap::Parser;
 use magicer::infrastructure::auth::basic_auth_service::BasicAuthService;
 use magicer::infrastructure::config::server_config::ServerConfig;
@@ -8,10 +8,10 @@ use magicer::presentation::http::router::create_router;
 use magicer::presentation::state::app_state::AppState;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tower::limit::concurrency::ConcurrencyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
-use std::time::Duration;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -35,7 +35,11 @@ async fn main() {
     tracing::info!("Server configuration loaded: {:?}", config);
 
     // Apply max_open_files limit
-    if let Err(e) = rlimit::setrlimit(rlimit::Resource::NOFILE, config.server.max_open_files as u64, config.server.max_open_files as u64) {
+    if let Err(e) = rlimit::setrlimit(
+        rlimit::Resource::NOFILE,
+        config.server.max_open_files as u64,
+        config.server.max_open_files as u64,
+    ) {
         tracing::warn!("Failed to set max_open_files limit: {}", e);
     }
 
@@ -71,26 +75,69 @@ async fn main() {
             magicer::presentation::http::middleware::error_handler::handle_error,
         ))
         .layer(middleware::from_fn(request_id::add_request_id))
-        .layer(ConcurrencyLimitLayer::new(config.server.max_connections as usize))
-        .layer(DefaultBodyLimit::max((config.server.limits.max_body_size_mb * 1024 * 1024) as usize))
-        .layer(TimeoutLayer::new(Duration::from_secs(config.server.timeouts.read_timeout_secs)));
+        .layer(ConcurrencyLimitLayer::new(
+            config.server.max_connections as usize,
+        ))
+        .layer(DefaultBodyLimit::max(
+            (config.server.limits.max_body_size_mb * 1024 * 1024) as usize,
+        ))
+        .layer(TimeoutLayer::new(Duration::from_secs(
+            config.server.timeouts.read_timeout_secs,
+        )));
 
     // Create a TCP listener with custom backlog
     let socket = socket2::Socket::new(
         socket2::Domain::for_address(socket_addr),
         socket2::Type::STREAM,
         Some(socket2::Protocol::TCP),
-    ).unwrap();
-    
+    )
+    .unwrap();
+
     socket.set_reuse_address(true).unwrap();
     socket.bind(&socket_addr.into()).unwrap();
     socket.listen(config.server.backlog as i32).unwrap();
-    
+
     let std_listener: std::net::TcpListener = socket.into();
     std_listener.set_nonblocking(true).unwrap();
     let listener = TcpListener::from_std(std_listener).unwrap();
-    
+
     tracing::info!("Listening on {} (backlog: {})", addr, config.server.backlog);
+
+    // Start background cleanup task
+    let cleanup_config = config.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(300)); // Every 5 minutes
+        loop {
+            interval.tick().await;
+            let temp_dir = &cleanup_config.analysis.temp_dir;
+            let max_age = cleanup_config.analysis.temp_file_max_age_secs;
+
+            if let Ok(mut entries) = tokio::fs::read_dir(temp_dir).await {
+                while let Ok(Some(entry)) = entries.next_entry().await {
+                    if let Ok(metadata) = entry.metadata().await {
+                        if metadata.is_file() {
+                            if let Ok(modified) = metadata.modified() {
+                                if let Ok(elapsed) = modified.elapsed() {
+                                    if elapsed.as_secs() > max_age {
+                                        let path = entry.path();
+                                        if let Err(e) = tokio::fs::remove_file(&path).await {
+                                            tracing::warn!(
+                                                "Failed to remove orphaned temp file {:?}: {}",
+                                                path,
+                                                e
+                                            );
+                                        } else {
+                                            tracing::info!("Removed orphaned temp file {:?}", path);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())

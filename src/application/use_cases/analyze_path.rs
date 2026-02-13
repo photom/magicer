@@ -7,8 +7,8 @@ use crate::domain::value_objects::path::RelativePath;
 use crate::domain::value_objects::request_id::RequestId;
 use crate::infrastructure::config::server_config::ServerConfig;
 use std::sync::Arc;
-use tokio::time::timeout;
 use std::time::Duration;
+use tokio::time::timeout;
 
 pub struct AnalyzePathUseCase {
     magic_repo: Arc<dyn MagicRepository>,
@@ -17,7 +17,11 @@ pub struct AnalyzePathUseCase {
 }
 
 impl AnalyzePathUseCase {
-    pub fn new(magic_repo: Arc<dyn MagicRepository>, sandbox: Arc<dyn SandboxService>, config: Arc<ServerConfig>) -> Self {
+    pub fn new(
+        magic_repo: Arc<dyn MagicRepository>,
+        sandbox: Arc<dyn SandboxService>,
+        config: Arc<ServerConfig>,
+    ) -> Self {
         Self {
             magic_repo,
             sandbox,
@@ -34,11 +38,12 @@ impl AnalyzePathUseCase {
         let resolved_path = self.sandbox.resolve_path(&path)?;
 
         let timeout_secs = self.config.server.timeouts.analysis_timeout_secs;
-        
+
         let (mime_type, description) = timeout(
             Duration::from_secs(timeout_secs),
-            self.magic_repo.analyze_file(&resolved_path)
-        ).await
+            self.magic_repo.analyze_file(&resolved_path),
+        )
+        .await
         .map_err(|_| ApplicationError::InternalError("Analysis timed out".to_string()))??;
 
         Ok(MagicResult::new(

@@ -57,6 +57,12 @@ impl MimeType {
     }
 }
 
+impl std::fmt::Display for MimeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.type_part, self.subtype_part)
+    }
+}
+
 impl TryFrom<&str> for MimeType {
     type Error = ValidationError;
 

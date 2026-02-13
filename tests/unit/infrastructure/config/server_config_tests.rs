@@ -98,3 +98,11 @@ fn test_validate_invalid_host_returns_error() {
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), ValidationError::EmptyValue));
 }
+
+#[test]
+fn test_get_free_space_mb() {
+    let config = ServerConfig::default();
+    let free_space = config.get_free_space_mb("/tmp");
+    // We expect some free space on /tmp in the sandbox
+    assert!(free_space > 0);
+}

@@ -344,4 +344,17 @@ impl ServerConfig {
     pub fn load_from_env() -> Self {
         Self::load(None)
     }
+
+    pub fn get_free_space_mb(&self, path: &str) -> u64 {
+        unsafe {
+            let mut stats: libc::statvfs = std::mem::zeroed();
+            let c_path = std::ffi::CString::new(path).unwrap();
+            if libc::statvfs(c_path.as_ptr(), &mut stats) == 0 {
+                let free_space = stats.f_bavail as u64 * stats.f_frsize as u64;
+                free_space / (1024 * 1024)
+            } else {
+                0
+            }
+        }
+    }
 }

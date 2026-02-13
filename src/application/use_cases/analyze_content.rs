@@ -7,8 +7,8 @@ use crate::infrastructure::config::server_config::ServerConfig;
 use crate::infrastructure::filesystem::mmap::MmapHandler;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::time::timeout;
 use std::time::Duration;
+use tokio::time::timeout;
 
 pub struct AnalyzeContentUseCase {
     magic_repo: Arc<dyn MagicRepository>,
@@ -36,8 +36,9 @@ impl AnalyzeContentUseCase {
 
         let (mime_type, description) = timeout(
             Duration::from_secs(timeout_secs),
-            self.magic_repo.analyze_buffer(data, filename.as_str())
-        ).await
+            self.magic_repo.analyze_buffer(data, filename.as_str()),
+        )
+        .await
         .map_err(|_| ApplicationError::InternalError("Analysis timed out".to_string()))??;
 
         Ok(MagicResult::new(
@@ -56,16 +57,34 @@ impl AnalyzeContentUseCase {
     ) -> Result<MagicResult, ApplicationError> {
         let timeout_secs = self.config.server.timeouts.analysis_timeout_secs;
 
-        let mmap =
-            MmapHandler::new(&std::fs::File::open(path).unwrap()).map_err(|e| {
-                ApplicationError::InternalError(format!("Failed to mmap temp file: {}", e))
-            })?;
+        let result = match MmapHandler::new(&std::fs::File::open(path).unwrap()) {
+            Ok(mmap) => timeout(
+                Duration::from_secs(timeout_secs),
+                self.magic_repo
+                    .analyze_buffer(mmap.as_slice(), filename.as_str()),
+            )
+            .await
+            .map_err(|_| ApplicationError::InternalError("Analysis timed out".to_string()))?,
+            Err(e) if self.config.analysis.mmap_fallback_enabled => {
+                tracing::warn!("Mmap failed, falling back to buffer: {}", e);
+                let data = std::fs::read(path)
+                    .map_err(|e| ApplicationError::InternalError(e.to_string()))?;
+                timeout(
+                    Duration::from_secs(timeout_secs),
+                    self.magic_repo.analyze_buffer(&data, filename.as_str()),
+                )
+                .await
+                .map_err(|_| ApplicationError::InternalError("Analysis timed out".to_string()))?
+            }
+            Err(e) => {
+                return Err(ApplicationError::InternalError(format!(
+                    "Failed to mmap temp file: {}",
+                    e
+                )))
+            }
+        }?;
 
-        let (mime_type, description) = timeout(
-            Duration::from_secs(timeout_secs),
-            self.magic_repo.analyze_buffer(mmap.as_slice(), filename.as_str())
-        ).await
-        .map_err(|_| ApplicationError::InternalError("Analysis timed out".to_string()))??;
+        let (mime_type, description) = result;
 
         Ok(MagicResult::new(
             request_id,

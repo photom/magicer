@@ -20,7 +20,7 @@ impl MagicRepository for FakeMagicRepo {
 
     fn analyze_file<'a>(&'a self, _path: &'a Path) -> BoxFuture<'a, Result<(MimeType, String), MagicError>> {
         Box::pin(async {
-            Ok((MimeType::try_from("application/octet-stream").unwrap(), "data".to_string()))
+            Ok((MimeType::try_from("application/pdf").unwrap(), "PDF document".to_string()))
         })
     }
 }

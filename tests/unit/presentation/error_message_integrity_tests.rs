@@ -24,3 +24,9 @@ fn test_file_not_found_propagation() {
     let app_err = ApplicationError::from(domain_err);
     assert_eq!(app_err.to_string(), "Not Found: File not found: /tmp/test.txt");
 }
+
+#[test]
+fn test_timeout_error_propagation() {
+    let app_err = ApplicationError::InternalError("Analysis timed out".to_string());
+    assert_eq!(app_err.to_string(), "Internal Error: Analysis timed out");
+}

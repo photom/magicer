@@ -1,19 +1,18 @@
+use crate::domain::value_objects::filename::WindowsCompatibleFilename;
+use crate::domain::value_objects::request_id::RequestId;
+use crate::presentation::http::responses::error_response::ErrorResponse;
+use crate::presentation::http::responses::magic_response::MagicResponse;
+use crate::presentation::state::app_state::AppState;
 use axum::{
+    body::Body,
     extract::{Query, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
-    body::Body,
-    Extension,
+    Extension, Json,
 };
-use crate::presentation::http::responses::magic_response::MagicResponse;
-use crate::presentation::http::responses::error_response::ErrorResponse;
-use crate::domain::value_objects::request_id::RequestId;
-use crate::domain::value_objects::filename::WindowsCompatibleFilename;
-use crate::presentation::state::app_state::AppState;
-use std::sync::Arc;
-use serde::Deserialize;
 use futures_util::StreamExt;
+use serde::Deserialize;
+use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 
 #[derive(Deserialize)]
@@ -49,8 +48,9 @@ pub async fn analyze_content(
     };
 
     let threshold = state.config.analysis.large_file_threshold_mb * 1024 * 1024;
-    
-    let mut buffer = Vec::new();
+    let buffer_size = state.config.analysis.write_buffer_size_kb * 1024;
+
+    let mut buffer = Vec::with_capacity(buffer_size.min(threshold));
     let mut is_large = false;
     let mut temp_file_handler = None;
     let mut open_file = None;
@@ -58,17 +58,34 @@ pub async fn analyze_content(
     while let Some(chunk_result) = body_stream.next().await {
         let chunk = match chunk_result {
             Ok(c) => c,
-            Err(e) => return (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: format!("Failed to read request body: {}", e),
-                    request_id: Some(request_id.as_str().to_string()),
-                }),
-            ).into_response(),
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: format!("Failed to read request body: {}", e),
+                        request_id: Some(request_id.as_str().to_string()),
+                    }),
+                )
+                    .into_response()
+            }
         };
 
         if !is_large {
             if buffer.len() + chunk.len() > threshold {
+                // Pre-flight disk space check
+                let free_space = state
+                    .config
+                    .get_free_space_mb(&state.config.analysis.temp_dir);
+                if free_space < state.config.analysis.min_free_space_mb {
+                    return (
+                        StatusCode::INSUFFICIENT_STORAGE,
+                        Json(ErrorResponse {
+                            error: format!("Insufficient storage space for analysis. Required: {}MB, Available: {}MB", state.config.analysis.min_free_space_mb, free_space),
+                            request_id: Some(request_id.as_str().to_string()),
+                        }),
+                    ).into_response();
+                }
+
                 is_large = true;
                 let temp_dir = std::path::Path::new(&state.config.analysis.temp_dir);
                 let tf = match crate::infrastructure::filesystem::temp_file_handler::TempFileHandler::new_empty(temp_dir) {
@@ -81,22 +98,25 @@ pub async fn analyze_content(
                         }),
                     ).into_response(),
                 };
-                
+
                 let mut file = match tokio::fs::OpenOptions::new()
                     .write(true)
                     .open(tf.path())
-                    .await 
+                    .await
                 {
                     Ok(f) => f,
-                    Err(e) => return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to open temp file: {}", e),
-                            request_id: Some(request_id.as_str().to_string()),
-                        }),
-                    ).into_response(),
+                    Err(e) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ErrorResponse {
+                                error: format!("Failed to open temp file: {}", e),
+                                request_id: Some(request_id.as_str().to_string()),
+                            }),
+                        )
+                            .into_response()
+                    }
                 };
-                
+
                 if let Err(e) = file.write_all(&buffer).await {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -104,9 +124,10 @@ pub async fn analyze_content(
                             error: format!("Failed to write buffer to temp file: {}", e),
                             request_id: Some(request_id.as_str().to_string()),
                         }),
-                    ).into_response();
+                    )
+                        .into_response();
                 }
-                
+
                 if let Err(e) = file.write_all(&chunk).await {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -114,9 +135,10 @@ pub async fn analyze_content(
                             error: format!("Failed to write chunk to temp file: {}", e),
                             request_id: Some(request_id.as_str().to_string()),
                         }),
-                    ).into_response();
+                    )
+                        .into_response();
                 }
-                
+
                 temp_file_handler = Some(tf);
                 open_file = Some(file);
                 buffer.clear();
@@ -133,7 +155,8 @@ pub async fn analyze_content(
                             error: format!("Failed to write chunk to temp file: {}", e),
                             request_id: Some(request_id.as_str().to_string()),
                         }),
-                    ).into_response();
+                    )
+                        .into_response();
                 }
             }
         }
@@ -148,17 +171,24 @@ pub async fn analyze_content(
                         error: format!("Failed to sync temp file: {}", e),
                         request_id: Some(request_id.as_str().to_string()),
                     }),
-                ).into_response();
+                )
+                    .into_response();
             }
             drop(file);
-            
+
             let tf = temp_file_handler.as_ref().unwrap();
-            state.analyze_content_use_case.execute_from_file(request_id.clone(), filename, tf.path()).await
+            state
+                .analyze_content_use_case
+                .execute_from_file(request_id.clone(), filename, tf.path())
+                .await
         } else {
             unreachable!()
         }
     } else {
-        state.analyze_content_use_case.execute(request_id.clone(), filename, &buffer).await
+        state
+            .analyze_content_use_case
+            .execute(request_id.clone(), filename, &buffer)
+            .await
     };
 
     match result {

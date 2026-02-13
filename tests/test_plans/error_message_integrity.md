@@ -40,6 +40,18 @@
 - The presentation layer does not swallow the specific cause.
 - Resulting JSON: `{"error": "Failed to validate filename: exceeds maximum length", ...}` (exact wording depends on domain impl).
 
+## test_timeout_error_propagation
+
+**Setup:**
+- Trigger a timeout error from the application layer.
+
+**Execution:**
+- Capture response.
+
+**Assertions:**
+- The presentation layer returns a `500` or `504` status code (per spec/architecture).
+- Resulting JSON contains `"error": "Analysis failed: Analysis timed out"`.
+
 # Sanitization
 
 ## test_internal_error_sanitization
