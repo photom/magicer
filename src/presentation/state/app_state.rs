@@ -22,12 +22,13 @@ impl AppState {
         auth_service: Arc<dyn AuthenticationService>,
         config: Arc<ServerConfig>,
     ) -> Self {
+        let timeout = config.server.timeouts.analysis_timeout_secs;
         Self {
             analyze_content_use_case: AnalyzeContentUseCase::new(
                 magic_repo.clone(),
-                config.clone(),
+                timeout,
             ),
-            analyze_path_use_case: AnalyzePathUseCase::new(magic_repo, sandbox, config.clone()),
+            analyze_path_use_case: AnalyzePathUseCase::new(magic_repo, sandbox, timeout),
             health_check_use_case: HealthCheckUseCase::new(),
             auth_service,
             config,

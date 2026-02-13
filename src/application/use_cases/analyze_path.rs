@@ -5,7 +5,6 @@ use crate::domain::services::sandbox_service::SandboxService;
 use crate::domain::value_objects::filename::WindowsCompatibleFilename;
 use crate::domain::value_objects::path::RelativePath;
 use crate::domain::value_objects::request_id::RequestId;
-use crate::infrastructure::config::server_config::ServerConfig;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -13,19 +12,19 @@ use tokio::time::timeout;
 pub struct AnalyzePathUseCase {
     magic_repo: Arc<dyn MagicRepository>,
     sandbox: Arc<dyn SandboxService>,
-    config: Arc<ServerConfig>,
+    analysis_timeout_secs: u64,
 }
 
 impl AnalyzePathUseCase {
     pub fn new(
         magic_repo: Arc<dyn MagicRepository>,
         sandbox: Arc<dyn SandboxService>,
-        config: Arc<ServerConfig>,
+        analysis_timeout_secs: u64,
     ) -> Self {
         Self {
             magic_repo,
             sandbox,
-            config,
+            analysis_timeout_secs,
         }
     }
 
@@ -37,14 +36,12 @@ impl AnalyzePathUseCase {
     ) -> Result<MagicResult, ApplicationError> {
         let resolved_path = self.sandbox.resolve_path(&path)?;
 
-        let timeout_secs = self.config.server.timeouts.analysis_timeout_secs;
-
         let (mime_type, description) = timeout(
-            Duration::from_secs(timeout_secs),
+            Duration::from_secs(self.analysis_timeout_secs),
             self.magic_repo.analyze_file(&resolved_path),
         )
         .await
-        .map_err(|_| ApplicationError::InternalError("Analysis timed out".to_string()))??;
+        .map_err(|_| ApplicationError::Timeout)??;
 
         Ok(MagicResult::new(
             request_id,

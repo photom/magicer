@@ -19,7 +19,7 @@ impl ApplicationError {
             Self::Unauthorized(_) => axum::http::StatusCode::UNAUTHORIZED,
             Self::Forbidden(_) => axum::http::StatusCode::FORBIDDEN,
             Self::NotFound(_) => axum::http::StatusCode::NOT_FOUND,
-            Self::UnprocessableEntity(_) => axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            Self::UnprocessableEntity(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             Self::InternalError(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             Self::Timeout => axum::http::StatusCode::GATEWAY_TIMEOUT,
         }

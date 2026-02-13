@@ -29,7 +29,8 @@ impl MagicRepository for FakeMagicRepo {
 async fn test_analyze_content_success() {
     let repo: Arc<dyn MagicRepository> = Arc::new(FakeMagicRepo);
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let use_case = AnalyzeContentUseCase::new(repo, config);
+    let timeout = config.server.timeouts.analysis_timeout_secs;
+    let use_case = AnalyzeContentUseCase::new(repo, timeout);
     let request_id = RequestId::generate();
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
     let data = b"%PDF-1.4";
@@ -44,7 +45,8 @@ async fn test_analyze_content_success() {
 async fn test_execute_from_file_success() {
     let repo: Arc<dyn MagicRepository> = Arc::new(FakeMagicRepo);
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let use_case = AnalyzeContentUseCase::new(repo, config);
+    let timeout = config.server.timeouts.analysis_timeout_secs;
+    let use_case = AnalyzeContentUseCase::new(repo, timeout);
     let request_id = RequestId::generate();
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
     
@@ -64,7 +66,8 @@ async fn test_execute_from_file_success() {
 async fn test_analyze_content_empty_rejected() {
     let repo: Arc<dyn MagicRepository> = Arc::new(FakeMagicRepo);
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let use_case = AnalyzeContentUseCase::new(repo, config);
+    let timeout = config.server.timeouts.analysis_timeout_secs;
+    let use_case = AnalyzeContentUseCase::new(repo, timeout);
     let request_id = RequestId::generate();
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
     let data = b"";
@@ -92,7 +95,8 @@ impl MagicRepository for FailingMagicRepo {
 async fn test_analyze_content_repository_failure() {
     let repo: Arc<dyn MagicRepository> = Arc::new(FailingMagicRepo);
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let use_case = AnalyzeContentUseCase::new(repo, config);
+    let timeout = config.server.timeouts.analysis_timeout_secs;
+    let use_case = AnalyzeContentUseCase::new(repo, timeout);
     let request_id = RequestId::generate();
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
     
@@ -100,4 +104,34 @@ async fn test_analyze_content_repository_failure() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(err.to_string().contains("Analysis failed: forced failure"));
+}
+
+struct SlowMagicRepo;
+impl MagicRepository for SlowMagicRepo {
+    fn analyze_buffer<'a>(&'a self, _data: &'a [u8], _filename: &'a str) -> BoxFuture<'a, Result<(MimeType, String), MagicError>> {
+        Box::pin(async {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            Ok((MimeType::try_from("application/pdf").unwrap(), "PDF document".to_string()))
+        })
+    }
+    fn analyze_file<'a>(&'a self, _path: &'a Path) -> BoxFuture<'a, Result<(MimeType, String), MagicError>> {
+        Box::pin(async {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            Ok((MimeType::try_from("application/pdf").unwrap(), "PDF document".to_string()))
+        })
+    }
+}
+
+#[tokio::test]
+async fn test_analyze_content_timeout() {
+    let repo: Arc<dyn MagicRepository> = Arc::new(SlowMagicRepo);
+    let timeout = 1; // 1 second timeout
+    let use_case = AnalyzeContentUseCase::new(repo, timeout);
+    let request_id = RequestId::generate();
+    let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
+    
+    let result = use_case.execute(request_id, filename, b"some data").await;
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.status_code(), axum::http::StatusCode::GATEWAY_TIMEOUT);
 }

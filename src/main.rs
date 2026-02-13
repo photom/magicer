@@ -46,8 +46,10 @@ async fn main() {
     // Initialize infrastructure
     // Use real LibmagicRepository built from source
     let magic_repo = Arc::new(
-        magicer::infrastructure::magic::libmagic_repository::LibmagicRepository::new()
-            .expect("Failed to initialize real libmagic repository"),
+        magicer::infrastructure::magic::libmagic_repository::LibmagicRepository::new(
+            config.analysis.mmap_fallback_enabled,
+        )
+        .expect("Failed to initialize real libmagic repository"),
     );
 
     let sandbox = Arc::new(PathSandbox::new(PathBuf::from(&config.sandbox.base_dir)));

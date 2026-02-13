@@ -37,7 +37,8 @@ async fn test_analyze_path_success() {
     let repo: Arc<dyn MagicRepository> = Arc::new(FakeMagicRepo);
     let sandbox: Arc<dyn SandboxService> = Arc::new(FakeSandbox);
     let config = Arc::new(ServerConfig::default());
-    let use_case = AnalyzePathUseCase::new(repo, sandbox, config);
+    let timeout = config.server.timeouts.analysis_timeout_secs;
+    let use_case = AnalyzePathUseCase::new(repo, sandbox, timeout);
     let request_id = RequestId::generate();
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
     let path = RelativePath::new("uploads/test.pdf").unwrap();
@@ -60,7 +61,8 @@ async fn test_analyze_path_outside_sandbox_rejected() {
     let repo: Arc<dyn MagicRepository> = Arc::new(FakeMagicRepo);
     let sandbox: Arc<dyn SandboxService> = Arc::new(BoundaryViolatingSandbox);
     let config = Arc::new(ServerConfig::default());
-    let use_case = AnalyzePathUseCase::new(repo, sandbox, config);
+    let timeout = config.server.timeouts.analysis_timeout_secs;
+    let use_case = AnalyzePathUseCase::new(repo, sandbox, timeout);
     let request_id = RequestId::generate();
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
     let path = RelativePath::new("test.pdf").unwrap();
@@ -82,7 +84,8 @@ async fn test_analyze_path_not_found() {
     let repo: Arc<dyn MagicRepository> = Arc::new(FailingMagicRepo);
     let sandbox: Arc<dyn SandboxService> = Arc::new(NotFoundSandbox);
     let config = Arc::new(ServerConfig::default());
-    let use_case = AnalyzePathUseCase::new(repo, sandbox, config);
+    let timeout = config.server.timeouts.analysis_timeout_secs;
+    let use_case = AnalyzePathUseCase::new(repo, sandbox, timeout);
     let request_id = RequestId::generate();
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
     let path = RelativePath::new("missing.pdf").unwrap();
@@ -92,6 +95,38 @@ async fn test_analyze_path_not_found() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(matches!(err, ApplicationError::NotFound(_)));
+}
+
+struct SlowMagicRepo;
+impl MagicRepository for SlowMagicRepo {
+    fn analyze_buffer<'a>(&'a self, _data: &'a [u8], _filename: &'a str) -> BoxFuture<'a, Result<(MimeType, String), MagicError>> {
+        Box::pin(async { 
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            Ok((MimeType::try_from("application/octet-stream").unwrap(), "data".to_string())) 
+        })
+    }
+    fn analyze_file<'a>(&'a self, _path: &'a Path) -> BoxFuture<'a, Result<(MimeType, String), MagicError>> {
+        Box::pin(async {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            Ok((MimeType::try_from("application/pdf").unwrap(), "PDF document".to_string()))
+        })
+    }
+}
+
+#[tokio::test]
+async fn test_analyze_path_timeout() {
+    let repo: Arc<dyn MagicRepository> = Arc::new(SlowMagicRepo);
+    let sandbox: Arc<dyn SandboxService> = Arc::new(FakeSandbox);
+    let timeout = 1; // 1 second timeout
+    let use_case = AnalyzePathUseCase::new(repo, sandbox, timeout);
+    let request_id = RequestId::generate();
+    let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
+    let path = RelativePath::new("test.pdf").unwrap();
+    
+    let result = use_case.execute(request_id, filename, path).await;
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.status_code(), axum::http::StatusCode::GATEWAY_TIMEOUT);
 }
 
 struct FailingMagicRepo;
