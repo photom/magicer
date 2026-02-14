@@ -6,7 +6,7 @@ use crate::presentation::state::app_state::AppState;
 use axum::{
     body::Body,
     extract::{Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     Extension, Json,
 };
@@ -26,10 +26,26 @@ pub struct AnalyzePathQuery {
 
 pub async fn analyze_content(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(query): Query<AnalyzeQuery>,
     Extension(request_id): Extension<RequestId>,
     body: Body,
 ) -> impl IntoResponse {
+    let is_chunked = headers
+        .get(axum::http::header::TRANSFER_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.contains("chunked"))
+        .unwrap_or(false);
+
+    let content_length = headers
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok());
+
+    let threshold = (state.config.analysis.large_file_threshold_mb * 1024 * 1024) as u64;
+
+    let force_to_file = is_chunked || content_length.map(|l| l > threshold).unwrap_or(false);
+
     let body_stream = body.into_data_stream();
     let filename = match WindowsCompatibleFilename::new(&query.filename) {
         Ok(f) => f,
@@ -45,10 +61,17 @@ pub async fn analyze_content(
         }
     };
 
-    let result = state
-        .analyze_content_use_case
-        .execute_stream(request_id.clone(), filename, body_stream)
-        .await;
+    let result = if force_to_file {
+        state
+            .analyze_content_use_case
+            .analyze_to_temp_file(request_id.clone(), filename, body_stream)
+            .await
+    } else {
+        state
+            .analyze_content_use_case
+            .analyze_in_memory(request_id.clone(), filename, body_stream)
+            .await
+    };
 
     match result {
         Ok(res) => (StatusCode::OK, Json(MagicResponse::from(res))).into_response(),

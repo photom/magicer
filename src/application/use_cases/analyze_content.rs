@@ -1,7 +1,7 @@
 use crate::application::errors::ApplicationError;
 use crate::domain::entities::magic_result::MagicResult;
 use crate::domain::repositories::magic_repository::MagicRepository;
-use crate::domain::services::temp_storage::TempStorageService;
+use crate::domain::services::temp_storage::{TempStorageService, TemporaryFile};
 use crate::domain::value_objects::filename::WindowsCompatibleFilename;
 use crate::domain::value_objects::request_id::RequestId;
 use crate::infrastructure::config::server_config::ServerConfig;
@@ -59,97 +59,84 @@ impl AnalyzeContentUseCase {
         ))
     }
 
-    pub async fn execute_stream<S, E>(
+    pub async fn analyze_in_memory<S, E>(
         &self,
         request_id: RequestId,
         filename: WindowsCompatibleFilename,
-        mut stream: S,
+        stream: S,
     ) -> Result<MagicResult, ApplicationError>
     where
         S: Stream<Item = Result<bytes::Bytes, E>> + Unpin + Send,
         E: std::fmt::Display,
     {
-        let threshold = self.config.analysis.large_file_threshold_mb * 1024 * 1024;
-        let buffer_size = self.config.analysis.write_buffer_size_kb * 1024;
+        let buffer = self.stream_to_buffer(stream).await?;
+        self.execute(request_id, filename, &buffer).await
+    }
 
-        let mut buffer = Vec::with_capacity(buffer_size.min(threshold));
-        let mut is_large = false;
-        let mut temp_file = None;
+    pub async fn analyze_to_temp_file<S, E>(
+        &self,
+        request_id: RequestId,
+        filename: WindowsCompatibleFilename,
+        stream: S,
+    ) -> Result<MagicResult, ApplicationError>
+    where
+        S: Stream<Item = Result<bytes::Bytes, E>> + Unpin + Send,
+        E: std::fmt::Display,
+    {
+        let mut tf = self.stream_to_file(stream).await?;
+        tf.sync().await.map_err(|e| {
+            ApplicationError::InternalError(format!("Failed to sync temp file: {}", e))
+        })?;
 
+        self.execute_from_file(request_id, filename, tf.path())
+            .await
+    }
+
+    async fn stream_to_buffer<S, E>(&self, mut stream: S) -> Result<Vec<u8>, ApplicationError>
+    where
+        S: Stream<Item = Result<bytes::Bytes, E>> + Unpin + Send,
+        E: std::fmt::Display,
+    {
+        let mut buffer = Vec::new();
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result.map_err(|e| ApplicationError::BadRequest(e.to_string()))?;
+            buffer.extend_from_slice(&chunk);
+        }
+        Ok(buffer)
+    }
 
-            if !is_large {
-                if buffer.len() + chunk.len() > threshold {
-                    // Check disk space before switching to file
-                    let free_space = self
-                        .config
-                        .get_free_space_mb(&self.config.analysis.temp_dir);
-                    if free_space < self.config.analysis.min_free_space_mb {
-                        return Err(ApplicationError::InsufficientStorage(format!(
-                            "Insufficient storage space for analysis: {}MB available, but {}MB required",
-                            free_space, self.config.analysis.min_free_space_mb
-                        )));
-                    }
+    async fn stream_to_file<S, E>(
+        &self,
+        mut stream: S,
+    ) -> Result<Box<dyn TemporaryFile>, ApplicationError>
+    where
+        S: Stream<Item = Result<bytes::Bytes, E>> + Unpin + Send,
+        E: std::fmt::Display,
+    {
+        let mut tf = self.init_temp_file().await?;
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = chunk_result.map_err(|e| ApplicationError::BadRequest(e.to_string()))?;
+            tf.write(&chunk).await.map_err(|e| {
+                ApplicationError::InternalError(format!("Failed to write chunk: {}", e))
+            })?;
+        }
+        Ok(tf)
+    }
 
-                    is_large = true;
-                    let mut tf = self
-                        .temp_storage
-                        .create_temp_file()
-                        .await
-                        .map_err(|e| {
-                            ApplicationError::InternalError(format!(
-                                "Failed to create temp file: {}",
-                                e
-                            ))
-                        })?;
-
-                    tf.write(&buffer).await.map_err(|e| {
-                        ApplicationError::InternalError(format!(
-                            "Failed to write buffer to temp file: {}",
-                            e
-                        ))
-                    })?;
-
-                    tf.write(&chunk).await.map_err(|e| {
-                        ApplicationError::InternalError(format!(
-                            "Failed to write chunk to temp file: {}",
-                            e
-                        ))
-                    })?;
-
-                    temp_file = Some(tf);
-                    buffer.clear();
-                    buffer.shrink_to_fit();
-                } else {
-                    buffer.extend_from_slice(&chunk);
-                }
-            } else {
-                if let Some(tf) = temp_file.as_mut() {
-                    tf.write(&chunk).await.map_err(|e| {
-                        ApplicationError::InternalError(format!(
-                            "Failed to write chunk to temp file: {}",
-                            e
-                        ))
-                    })?;
-                }
-            }
+    async fn init_temp_file(&self) -> Result<Box<dyn TemporaryFile>, ApplicationError> {
+        let free_space = self
+            .config
+            .get_free_space_mb(&self.config.analysis.temp_dir);
+        if free_space < self.config.analysis.min_free_space_mb {
+            return Err(ApplicationError::InsufficientStorage(format!(
+                "Insufficient storage space for analysis: {}MB available, but {}MB required",
+                free_space, self.config.analysis.min_free_space_mb
+            )));
         }
 
-        if is_large {
-            if let Some(mut tf) = temp_file {
-                tf.sync().await.map_err(|e| {
-                    ApplicationError::InternalError(format!("Failed to sync temp file: {}", e))
-                })?;
-
-                self.execute_from_file(request_id, filename, tf.path())
-                    .await
-            } else {
-                unreachable!()
-            }
-        } else {
-            self.execute(request_id, filename, &buffer).await
-        }
+        self.temp_storage.create_temp_file().await.map_err(|e| {
+            ApplicationError::InternalError(format!("Failed to create temp file: {}", e))
+        })
     }
 
     pub async fn execute_from_file(

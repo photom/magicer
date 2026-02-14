@@ -28,20 +28,19 @@ The `AnalyzeContentUseCase` orchestrates the analysis of binary content (uploade
 classDiagram
     class AnalyzeContentUseCase {
         -Arc~dyn MagicRepository~ repository
-        +new(repository: Arc~dyn MagicRepository~) Self
-        +execute(request: AnalyzeContentRequest) Result~MagicResponse, ApplicationError~
-    }
-    
-    class AnalyzeContentRequest {
-        +content: Bytes
-        +filename: WindowsCompatibleFilename
+        -Arc~dyn TempStorageService~ temp_storage
+        -Arc~ServerConfig~ config
+        +new(repository, temp_storage, config) Self
+        +analyze_in_memory(request_id, filename, stream) Result
+        +analyze_to_temp_file(request_id, filename, stream) Result
+        +execute(request_id, filename, data) Result
+        +execute_from_file(request_id, filename, path) Result
     }
     
     class MagicResponse {
         +request_id: RequestId
         +mime_type: MimeType
         +description: String
-        +encoding: Option~String~
         +analyzed_at: DateTime~Utc~
     }
     
@@ -52,101 +51,99 @@ classDiagram
     class MagicRepository {
         <<trait>>
     }
+
+    class TempStorageService {
+        <<trait>>
+    }
     
     AnalyzeContentUseCase *-- MagicRepository : depends on
-    AnalyzeContentUseCase ..> AnalyzeContentRequest : consumes
+    AnalyzeContentUseCase *-- TempStorageService : depends on
     AnalyzeContentUseCase ..> MagicResponse : produces
     AnalyzeContentUseCase ..> ApplicationError : returns
     
-    note for AnalyzeContentUseCase "Application service\nOrchestrates domain objects\nDependency: MagicRepository trait"
+    note for AnalyzeContentUseCase "Application service\nOrchestrates content analysis\nSupports in-memory and file-based streaming"
 ```
 
 ## Execution Flow
 
+The processing strategy is determined at the Presentation Layer (HTTP Handler) based on request headers.
+
+### Decision Logic (Handler)
+```mermaid
+graph TD
+    Request[Incoming Request] --> Chunked{is Chunked?}
+    Chunked -->|Yes| FileStrategy[analyze_to_temp_file]
+    Chunked -->|No| LengthCheck{Length > Threshold?}
+    LengthCheck -->|Yes| FileStrategy
+    LengthCheck -->|No| MemoryStrategy[analyze_in_memory]
+```
+
+### File-Based Analysis Flow
 ```mermaid
 sequenceDiagram
-    participant Handler as HTTP Handler
-    participant UseCase as AnalyzeContentUseCase
-    participant Request as AnalyzeContentRequest
-    participant Repo as MagicRepository
-    participant Result as MagicResult
-    participant Response as MagicResponse
+    participant Handler
+    participant UseCase
+    participant TempStorage
+    participant Repo
     
-    Handler->>Request: new(content, filename)
-    Handler->>UseCase: execute(request)
-    UseCase->>Request: Extract content & filename
-    UseCase->>Repo: analyze_buffer(data, filename)
-    alt Analysis succeeds
-        Repo-->>Result: Ok(MagicResult)
-        UseCase->>Response: Map to MagicResponse
-        UseCase-->>Handler: Ok(MagicResponse)
-    else Analysis fails
-        Repo-->>UseCase: Err(DomainError)
-        UseCase->>UseCase: Map to ApplicationError
-        UseCase-->>Handler: Err(ApplicationError)
+    Handler->>UseCase: analyze_to_temp_file(stream)
+    UseCase->>UseCase: check disk space
+    UseCase->>TempStorage: create_temp_file()
+    loop Stream Chunks
+        UseCase->>UseCase: write chunk to file
     end
+    UseCase->>UseCase: sync file
+    UseCase->>Repo: analyze_file(path)
+    Repo-->>UseCase: Result
+    UseCase-->>Handler: MagicResult
 ```
 
 ## Properties
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `repository` | `Arc<dyn MagicRepository>` | Magic analysis repository (trait object) |
+| `magic_repo` | `Arc<dyn MagicRepository>` | Repository for libmagic analysis |
+| `temp_storage` | `Arc<dyn TempStorageService>` | Service for temporary file management |
+| `config` | `Arc<ServerConfig>` | Application configuration |
 
 ## Methods
 
 | Method | Parameters | Return Type | Description |
 |--------|------------|-------------|-------------|
-| `new` | `repository: Arc<dyn MagicRepository>` | `Self` | Constructor with dependency injection |
-| `execute` | `request: AnalyzeContentRequest` | `Result<MagicResponse, ApplicationError>` | Execute use case |
+| `new` | repo, storage, config | `Self` | Constructor |
+| `analyze_in_memory` | id, name, stream | `Result` | Collects stream into buffer and analyzes |
+| `analyze_to_temp_file` | id, name, stream | `Result` | Streams to temp file and analyzes via mmap |
+| `execute` | id, name, data | `Result` | Direct buffer analysis (atomic operation) |
+| `execute_from_file` | id, name, path | `Result` | Direct file analysis (atomic operation) |
 
 ## Execution Process
 
-```mermaid
-flowchart TD
-    Start([execute request]) --> Extract[Extract content & filename]
-    Extract --> Validate{Valid input?}
-    Validate -->|No| ErrBadRequest[ApplicationError::BadRequest]
-    Validate -->|Yes| CallRepo[repository.analyze_buffer]
-    CallRepo --> RepoResult{Result?}
-    RepoResult -->|Err| MapError[Map DomainError to ApplicationError]
-    RepoResult -->|Ok| MapResponse[Map MagicResult to MagicResponse]
-    MapError --> ErrResult[Err ApplicationError]
-    MapResponse --> GenRequestId[Generate RequestId]
-    GenRequestId --> Success[Ok MagicResponse]
-    
-    style Success fill:#90EE90
-    style ErrBadRequest fill:#FFB6C1
-    style ErrResult fill:#FFB6C1
-```
+The `AnalyzeContentUseCase` provides specialized methods for different data sources:
+
+1. **In-Memory Streaming (`analyze_in_memory`)**:
+   - Collects chunks from an async stream into a `Vec<u8>`.
+   - Once the stream is exhausted, it calls `execute()`.
+   - Used for small fixed-length payloads.
+
+2. **File-Based Streaming (`analyze_to_temp_file`)**:
+   - Initializes a temporary file (checking disk space first).
+   - Streams chunks directly to disk.
+   - Synchronizes file state and calls `execute_from_file()`.
+   - Used for chunked encoding or large payloads.
+
+3. **Core Analysis (`execute` / `execute_from_file`)**:
+   - Performs the actual integration with `MagicRepository`.
+   - Applies the analysis timeout constraint.
+   - Maps domain results to `MagicResult` entities.
 
 ## Error Mapping
 
-```mermaid
-graph TD
-    Domain[DomainError] --> Map[Error Mapping]
-    
-    Map --> Validation[ValidationError]
-    Validation --> BadRequest[ApplicationError::BadRequest]
-    
-    Map --> Magic[MagicError]
-    Magic --> UnprocessableEntity[ApplicationError::UnprocessableEntity]
-    
-    Map --> FileNotFound[FileNotFound]
-    FileNotFound --> NotFound[ApplicationError::NotFound]
-    
-    Map --> Permission[PermissionDenied]
-    Permission --> Forbidden[ApplicationError::Forbidden]
-    
-    Map --> Config[ConfigurationError]
-    Config --> Internal[ApplicationError::InternalError]
-    
-    style BadRequest fill:#FFB6C1
-    style UnprocessableEntity fill:#FFB6C1
-    style NotFound fill:#FFB6C1
-    style Forbidden fill:#FFB6C1
-    style Internal fill:#FFB6C1
-```
+| Domain/Infra Error | Application Error | HTTP Status |
+|--------------------|-------------------|-------------|
+| Validation Error | `BadRequest` | 400 |
+| Magic Error | `InternalError` | 500 |
+| Disk Full (IO) | `InsufficientStorage` | 507 |
+| Analysis Timeout | `Timeout` | 504 |
 
 ## Usage Scenario
 

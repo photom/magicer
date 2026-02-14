@@ -562,13 +562,19 @@ graph TB
 
 #### Processing Strategy
 
-**Small Content (< Threshold):**
+**Chunked Content:**
+1. Content is always streamed to a temporary file regardless of size.
+2. Temporary file is created with a unique name.
+3. Content is written in configurable chunks.
+4. Analysis is performed using memory-mapped I/O on the temporary file.
+
+**Small Content (No Chunked & < Threshold):**
 1. Keep entire content in memory
 2. Pass directly to libmagic via buffer API
 3. No file I/O overhead
 4. Fast path for typical requests
 
-**Large Content (≥ Threshold):**
+**Large Content (No Chunked & ≥ Threshold):**
 1. Create temporary file with unique name
 2. Stream content in configurable chunks
 3. Flush and sync to ensure data persistence
@@ -932,7 +938,7 @@ graph TB
 
 ### 4.5. HTTP Request Streaming Architecture
 
-The server streams HTTP request bodies directly to temporary files for constant memory usage and early error detection.
+The server conditionally streams HTTP request bodies to temporary files based on the transfer encoding and content length.
 
 #### Request Body Streaming Flow
 
@@ -946,89 +952,67 @@ sequenceDiagram
     participant Cleanup
     
     Client->>Axum: Start upload
-    Axum->>Stream: Get body stream
-    Stream->>TempFile: Create temp file
+    Note over Client,Axum: Check Chunked or Content-Length > Threshold
     
-    loop For each chunk (64KB)
-        Client->>Stream: Send chunk
-        Stream->>TempFile: Write chunk immediately
-        Note over Stream: Only 64KB in memory
+    alt Should Stream
+        Axum->>Stream: Get body stream
+        Stream->>TempFile: Create temp file
+        
+        loop For each chunk (64KB)
+            Client->>Stream: Send chunk
+            Stream->>TempFile: Write chunk immediately
+        end
+        
+        TempFile->>TempFile: Flush & sync
+        TempFile->>Analysis: Analyze via mmap
+        Analysis-->>Client: Result
+        TempFile->>Cleanup: Delete file
+    else Should Hold in Memory
+        Client->>Axum: Send full body
+        Axum->>Analysis: Analyze in-memory buffer
+        Analysis-->>Client: Result
     end
-    
-    TempFile->>TempFile: Flush & sync
-    TempFile->>Analysis: Analyze via mmap
-    Analysis-->>Client: Result
-    TempFile->>Cleanup: Delete file
 ```
 
 **Request Flow:**
-```
-Client → Stream to Temp File (64KB buffer) → Analysis → Response
-```
+- **Chunked OR Content-Length > Threshold:** Client → Stream to Temp File (64KB buffer) → Analysis → Response
+- **Otherwise:** Client → In-Memory Buffer → Analysis → Response
 
-**Memory Footprint:** Constant 64KB regardless of file size
+**Memory Footprint:** 
+- **Streaming:** Constant 64KB regardless of file size
+- **In-Memory:** Equal to file size (up to threshold)
 
 #### Architecture Benefits
 
-**1. Constant Memory Usage**
+**1. Efficient Memory Usage**
 
-```mermaid
-graph LR
-    subgraph Stream["Stream-First Architecture"]
-        R1[Request 1: 64KB] --> M[Memory]
-        R2[Request 2: 64KB] --> M
-        R3[Request 3: 64KB] --> M
-        M --> Total[Total: 192KB]
-    end
-    
-    style Total fill:#e1ffe1
-```
+For large files or streams of unknown size, the server maintains a constant memory footprint. For small files, it avoids disk I/O latency.
 
-- Memory usage independent of file size
-- Predictable resource consumption
-- Better behavior under concurrent load
-- No risk of OOM for large files
+**2. Earlier Failure Detection (for Streaming)**
 
-**2. Earlier Failure Detection**
+For requests that are streamed, disk full is detected before buffering the entire upload.
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Server
-    participant Disk
-    
-    Client->>Server: Start upload
-    Server->>Disk: Check space
-    Disk-->>Server: Full!
-    Server-->>Client: 507 error (immediately)
-    
-    Note over Client,Server: Error detected before<br/>buffering entire upload
-```
-
-- Disk full detected before buffering entire upload
-- Client wastes less bandwidth
-- Faster error feedback
-- Better user experience
-
-**3. Better Backpressure Handling**
+**3. Flexible Processing Path**
 
 ```mermaid
 graph TB
-    Client[Fast Client] --> Network[Network]
-    Network --> Server[Server]
-    Server --> Disk[Disk I/O]
+    Request[Incoming Request] --> Chunked{is Chunked?}
+    Chunked -->|Yes| Stream[Stream to Temp]
+    Chunked -->|No| LengthCheck{Length > Threshold?}
+    LengthCheck -->|Yes| Stream
+    LengthCheck -->|No| Memory[In-Memory Buffer]
     
-    Disk -->|Slow| Backpressure[Backpressure]
-    Backpressure -->|Pause| Network
-    Network -->|Slow down| Client
+    Stream --> Write[Write to disk]
+    Write --> AnalyzeStream[Analyze via mmap]
+    Memory --> AnalyzeMem[Analyze via buffer]
     
-    style Backpressure fill:#fff4e1
+    style Stream fill:#fff4e1
+    style Memory fill:#e1ffe1
 ```
 
-- TCP backpressure naturally slows client
-- Disk speed limits upload rate
-- No large buffer accumulation
-- System self-regulates
+- **Conditional streaming** optimizes for both small and large payloads.
+- **Threshold-based** switching prevents OOM for large non-chunked uploads.
+- **Chunked encoding** is always offloaded to disk to handle potentially infinite streams safely.
 
 #### Implementation Considerations
 
@@ -1038,43 +1022,18 @@ graph TB
 - Custom stream handling for HTTP body
 - Error handling for partial writes
 - Configurable chunk size
-- Progress tracking
-- Graceful shutdown during streaming
+- Decision logic for streaming vs. buffering
 
 **2. Temporary File Usage**
 
-```mermaid
-graph TB
-    Request[All Requests] --> Stream[Stream to Temp]
-    Stream --> Write[Write to disk]
-    Write --> Analyze[Analyze via mmap]
-    
-    Note1[Consistent flow<br/>for all file sizes]
-    
-    style Note1 fill:#e1ffe1
-```
-
-- All requests create temporary files regardless of size
-- Uniform processing path simplifies implementation
-- Disk I/O cost acceptable for predictable memory usage
+- Temporary files are used only when streaming is triggered.
+- Uniform analysis via `MagicRepository::analyze_buffer` for both mmap and memory buffers.
 
 **3. Early Validation Strategy**
 
-```mermaid
-stateDiagram-v2
-    [*] --> ValidateHeaders: Client starts upload
-    ValidateHeaders --> ValidateAuth: Headers OK
-    ValidateAuth --> Streaming: Auth OK
-    Streaming --> Analysis: Stream complete
-    Analysis --> [*]: Success
-    
-    ValidateHeaders --> [*]: 400 error (no streaming)
-    ValidateAuth --> [*]: 401 error (no streaming)
-```
-
-- Authentication and basic validation before streaming
-- Invalid requests rejected without disk I/O
-- Only valid requests create temporary files
+- Authentication before deciding to stream or buffer.
+- Pre-flight disk space checks for streaming path.
+- Invalid requests rejected without disk I/O.
 
 **Implementation Location:**
 
@@ -1088,70 +1047,18 @@ stateDiagram-v2
 
 **System Behavior (1000 concurrent requests, SSD storage):**
 
-| Metric | Stream-First Architecture |
+| Metric | Conditional Streaming Architecture |
 |--------|--------------------------|
-| Peak Memory | 60MB (1000 × 64KB) |
-| Disk I/O | 1000 requests |
-| Throughput | ~800 req/s |
-| Latency (p99) | 800ms |
+| Peak Memory | Varies by file size (max threshold * 1000 for small files) |
+| Disk I/O | Only for large/chunked requests |
+| Throughput | Optimized for small files |
 
 **Key Performance Properties:**
-- Constant memory usage independent of file size
+- Optimized latency for small files (in-memory)
+- Protected memory for large files (streaming)
+- Robust handling of chunked transfer encoding
 - Predictable resource consumption under load
-- Excellent scalability for concurrent large uploads
-- Disk I/O limited by SSD throughput
 
-#### Adopted Design
-
-```mermaid
-graph TB
-    Design[Stream-First Architecture]
-    
-    Design --> P1[✓ Low memory: 64KB constant]
-    Design --> P2[✓ Early error detection]
-    Design --> P3[✓ Predictable resource usage]
-    Design --> P4[✓ Production-ready]
-    
-    style Design fill:#e1ffe1
-```
-
-**Design Properties:**
-
-| Property | Description | Benefit |
-|----------|-------------|---------|
-| Memory Efficiency | Constant 64KB buffer | Prevents OOM under concurrent load |
-| Predictability | Memory independent of file size | Easier capacity planning |
-| Error Detection | Disk full detected during upload | Faster client feedback |
-| Scalability | Handles 1000+ concurrent requests | Production-ready |
-
-**Key Design Decisions:**
-
-1. **Constant Memory Usage:**
-   - 64KB buffer per request regardless of file size
-   - Enables higher connection limits with same hardware
-   - Prevents OOM scenarios under load
-
-2. **Uniform Processing Path:**
-   - All requests create temporary files
-   - Simplifies implementation and testing
-   - Consistent behavior for all file sizes
-
-3. **Early Validation:**
-   - Authentication before streaming
-   - Pre-flight disk space checks
-   - Invalid requests rejected without disk I/O
-
-4. **Production Readiness:**
-   - Robust under high concurrency
-   - Excellent backpressure handling
-   - Scales to higher throughput
-   - Consistent and predictable behavior
-
-#### References
-
-- **Axum Body Streaming:** https://docs.rs/axum/latest/axum/body/struct.Body.html
-- **Tokio Stream:** https://docs.rs/tokio-stream/latest/tokio_stream/
-- **HTTP Backpressure:** RFC 9110 Section 9.3.1
 
 ---
 

@@ -36,7 +36,20 @@ The server manages incoming traffic using a combination of active connection lim
 | **Max URI Length** | 8KB | Limit for the URI string including all query parameters. |
 | **Max Header Size** | 16KB | Total cumulative size allowed for all HTTP request headers. |
 
-## 4. File System Sandbox Specification
+## 4. Payload Handling Strategy
+
+The server dynamically chooses between in-memory buffering and temporary file streaming based on request characteristics to optimize for both latency and resource protection.
+
+| Scenario | Handling Strategy | Logic |
+| --- | --- | --- |
+| **Chunked Transfer** | Streaming | `Transfer-Encoding: chunked` requests are always streamed to disk to prevent memory exhaustion from potentially large or slow streams. |
+| **Large Fixed Payload** | Streaming | Non-chunked requests where `Content-Length` > `analysis.large_file_threshold_mb` (default 10MB) are streamed to disk. |
+| **Small Fixed Payload** | In-Memory | Non-chunked requests where `Content-Length` <= `threshold` are held in memory for faster analysis. |
+
+* **Streaming Implementation:** Uses a 64KB sliding buffer and memory-mapped I/O (mmap) for analysis.
+* **Security:** Streaming paths include pre-flight disk space checks and atomic temporary file creation.
+
+## 5. File System Sandbox Specification
 
 The server enforces a strict security boundary for all file-path-based operations:
 

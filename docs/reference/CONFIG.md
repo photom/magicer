@@ -355,7 +355,10 @@ File analysis behavior settings.
 **Type:** Unsigned 64-bit integer  
 **Default:** 10  
 **Unit:** Megabytes  
-**Description:** The size threshold at which the server switches from in-memory analysis to file-based streaming and memory-mapped I/O. Lower values reduce memory pressure but increase disk I/O.
+**Description:** The size threshold for switching between in-memory and file-based analysis.
+- **Non-chunked requests:** If `Content-Length` is less than or equal to this threshold, the payload is held in memory. Otherwise, it is streamed to a temporary file.
+- **Chunked requests:** These are always streamed to a temporary file regardless of the threshold, as their total size is unknown upfront.
+Lower values reduce memory pressure but increase disk I/O.
 
 #### `analysis.write_buffer_size_kb`
 

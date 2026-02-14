@@ -26,6 +26,12 @@ paths:
     post:
       operationId: analyzeMagicContent
       summary: Analyze via raw octet-stream (v1)
+      description: >
+        Analyzes binary content. The server handles the request body based on its size and transfer encoding:
+        - **Chunked Transfer Encoding:** Content is streamed and written to a temporary file for analysis.
+        - **Content-Length > threshold:** If the `Content-Length` exceeds the configured `large_file_threshold_mb`, the content is streamed and written to a temporary file.
+        - **Content-Length <= threshold:** For smaller, non-chunked requests, the content is held in memory for analysis.
+        Threshold is configurable (default: 10MB). Max body limit is 100MB.
       parameters:
         - in: query
           name: filename
