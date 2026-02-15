@@ -93,7 +93,8 @@ sequenceDiagram
         UseCase->>UseCase: write chunk to file
     end
     UseCase->>UseCase: sync file
-    UseCase->>Repo: analyze_file(path)
+    UseCase->>UseCase: Memory map file (mmap)
+    UseCase->>Repo: analyze_buffer(mmap_slice)
     Repo-->>UseCase: Result
     UseCase-->>Handler: MagicResult
 ```

@@ -5,6 +5,7 @@ use crate::domain::services::temp_storage::{TempStorageService, TemporaryFile};
 use crate::domain::value_objects::filename::WindowsCompatibleFilename;
 use crate::domain::value_objects::request_id::RequestId;
 use crate::infrastructure::config::server_config::ServerConfig;
+use crate::infrastructure::filesystem::mmap::MmapHandler;
 use futures_util::{Stream, StreamExt};
 use std::path::Path;
 use std::sync::Arc;
@@ -145,11 +146,20 @@ impl AnalyzeContentUseCase {
         filename: WindowsCompatibleFilename,
         path: &Path,
     ) -> Result<MagicResult, ApplicationError> {
+        let file = std::fs::File::open(path).map_err(|e| {
+            ApplicationError::InternalError(format!("Failed to open file for analysis: {}", e))
+        })?;
+
+        let mmap = MmapHandler::new(&file).map_err(|e| {
+            ApplicationError::InternalError(format!("Failed to mmap file for analysis: {}", e))
+        })?;
+
         let timeout_secs = self.config.server.timeouts.analysis_timeout_secs;
 
         let (mime_type, description) = timeout(
             Duration::from_secs(timeout_secs),
-            self.magic_repo.analyze_file(path),
+            self.magic_repo
+                .analyze_buffer(mmap.as_slice(), filename.as_str()),
         )
         .await
         .map_err(|_| ApplicationError::Timeout)??;

@@ -36,6 +36,46 @@
 
 # Handler Logic (Streaming)
 
+## test_analyze_content_chunked_always_streams_to_file
+
+**Setup:**
+- `analysis.large_file_threshold_mb = 10`.
+- Client sends `Transfer-Encoding: chunked`.
+- Small amount of data (1KB).
+
+**Execution:**
+- POST `/v1/magic/content`.
+
+**Assertions:**
+- Status `200 OK`.
+- Verification that it was streamed to disk (e.g., via mock or internal state check).
+
+## test_analyze_content_with_content_length_exceeding_threshold_streams_to_file
+
+**Setup:**
+- `analysis.large_file_threshold_mb = 1`.
+- `Content-Length: 2097152` (2MB).
+
+**Execution:**
+- POST `/v1/magic/content`.
+
+**Assertions:**
+- Status `200 OK`.
+- Verification that it was streamed to disk.
+
+## test_analyze_content_with_content_length_below_threshold_held_in_memory
+
+**Setup:**
+- `analysis.large_file_threshold_mb = 10`.
+- `Content-Length: 1024` (1KB).
+
+**Execution:**
+- POST `/v1/magic/content`.
+
+**Assertions:**
+- Status `200 OK`.
+- Verification that it was processed in memory.
+
 ## test_analyze_content_switches_to_file_at_threshold
 
 **Setup:**

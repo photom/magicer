@@ -87,7 +87,9 @@ sequenceDiagram
     UseCase->>Sandbox: resolve_path(relative_path)
     alt Path valid and within sandbox
         Sandbox-->>UseCase: Ok(absolute_path)
-        UseCase->>Repo: analyze_file(absolute_path)
+        UseCase->>UseCase: Open file
+        UseCase->>UseCase: Memory map file (mmap)
+        UseCase->>Repo: analyze_buffer(mmap_slice)
         alt Analysis succeeds
             Repo-->>Result: Ok(MagicResult)
             UseCase->>Response: Map to MagicResponse
@@ -108,14 +110,15 @@ sequenceDiagram
 | Property | Type | Description |
 |----------|------|-------------|
 | `repository` | `Arc<dyn MagicRepository>` | Magic analysis repository |
-| `sandbox` | `PathSandbox` | Sandbox boundary enforcer |
+| `sandbox` | `Arc<dyn SandboxService>` | Sandbox boundary enforcer |
+| `analysis_timeout_secs` | `u64` | Analysis timeout in seconds |
 
 ## Methods
 
 | Method | Parameters | Return Type | Description |
 |--------|------------|-------------|-------------|
-| `new` | `repository: Arc<dyn MagicRepository>, sandbox: PathSandbox` | `Self` | Constructor with dependencies |
-| `execute` | `request: AnalyzePathRequest` | `Result<MagicResponse, ApplicationError>` | Execute use case with sandbox validation |
+| `new` | `repository, sandbox, timeout` | `Self` | Constructor with dependencies |
+| `execute` | `request_id, filename, path` | `Result<MagicResult, ApplicationError>` | Execute use case with sandbox validation |
 
 ## Execution Process
 
@@ -127,7 +130,8 @@ flowchart TD
     InSandbox -->|No| ErrForbidden[ApplicationError::Forbidden]
     InSandbox -->|Yes| CheckExists{File exists?}
     CheckExists -->|No| ErrNotFound[ApplicationError::NotFound]
-    CheckExists -->|Yes| CallRepo[repository.analyze_file]
+    CheckExists -->|Yes| Mmap[Memory map file]
+    Mmap --> CallRepo[repository.analyze_buffer]
     CallRepo --> RepoResult{Result?}
     RepoResult -->|Err| MapError[Map DomainError]
     RepoResult -->|Ok| MapResponse[Map MagicResult]

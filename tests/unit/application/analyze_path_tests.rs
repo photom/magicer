@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use futures_util::future::BoxFuture;
 use magicer::application::use_cases::analyze_path::AnalyzePathUseCase;
 use magicer::domain::repositories::magic_repository::MagicRepository;
@@ -16,26 +16,32 @@ use magicer::infrastructure::config::server_config::ServerConfig;
 struct FakeMagicRepo;
 impl MagicRepository for FakeMagicRepo {
     fn analyze_buffer<'a>(&'a self, _data: &'a [u8], _filename: &'a str) -> BoxFuture<'a, Result<(MimeType, String), MagicError>> {
-        Box::pin(async { Ok((MimeType::try_from("application/octet-stream").unwrap(), "data".to_string())) })
-    }
-    fn analyze_file<'a>(&'a self, _path: &'a Path) -> BoxFuture<'a, Result<(MimeType, String), MagicError>> {
         Box::pin(async {
             Ok((MimeType::try_from("application/pdf").unwrap(), "PDF document".to_string()))
         })
     }
 }
 
-struct FakeSandbox;
+struct FakeSandbox {
+    root: PathBuf,
+}
 impl SandboxService for FakeSandbox {
     fn resolve_path(&self, path: &RelativePath) -> Result<PathBuf, ValidationError> {
-        Ok(PathBuf::from("/sandbox").join(path.as_str()))
+        Ok(self.root.join(path.as_str()))
     }
 }
 
 #[tokio::test]
 async fn test_analyze_path_success() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root = temp_dir.path().to_path_buf();
+    let upload_dir = root.join("uploads");
+    std::fs::create_dir_all(&upload_dir).unwrap();
+    let file_path = upload_dir.join("test.pdf");
+    std::fs::write(&file_path, b"%PDF-1.4").unwrap();
+
     let repo: Arc<dyn MagicRepository> = Arc::new(FakeMagicRepo);
-    let sandbox: Arc<dyn SandboxService> = Arc::new(FakeSandbox);
+    let sandbox: Arc<dyn SandboxService> = Arc::new(FakeSandbox { root });
     let config = Arc::new(ServerConfig::default());
     let timeout = config.server.timeouts.analysis_timeout_secs;
     let use_case = AnalyzePathUseCase::new(repo, sandbox, timeout);
@@ -71,18 +77,20 @@ async fn test_analyze_path_outside_sandbox_rejected() {
     assert!(result.is_err());
 }
 
-struct NotFoundSandbox;
+struct NotFoundSandbox {
+    root: PathBuf,
+}
 impl SandboxService for NotFoundSandbox {
     fn resolve_path(&self, _path: &RelativePath) -> Result<PathBuf, ValidationError> {
-        // Here we simulate successful resolution to a path that then doesn't exist
-        Ok(PathBuf::from("/non_existent_file"))
+        Ok(self.root.join("non_existent_file"))
     }
 }
 
 #[tokio::test]
 async fn test_analyze_path_not_found() {
+    let temp_dir = tempfile::tempdir().unwrap();
     let repo: Arc<dyn MagicRepository> = Arc::new(FailingMagicRepo);
-    let sandbox: Arc<dyn SandboxService> = Arc::new(NotFoundSandbox);
+    let sandbox: Arc<dyn SandboxService> = Arc::new(NotFoundSandbox { root: temp_dir.path().to_path_buf() });
     let config = Arc::new(ServerConfig::default());
     let timeout = config.server.timeouts.analysis_timeout_secs;
     let use_case = AnalyzePathUseCase::new(repo, sandbox, timeout);
@@ -90,7 +98,6 @@ async fn test_analyze_path_not_found() {
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
     let path = RelativePath::new("missing.pdf").unwrap();
     
-    // We need to ensure that AnalyzePathUseCase checks for file existence
     let result = use_case.execute(request_id, filename, path).await;
     assert!(result.is_err());
     let err = result.unwrap_err();
@@ -102,21 +109,20 @@ impl MagicRepository for SlowMagicRepo {
     fn analyze_buffer<'a>(&'a self, _data: &'a [u8], _filename: &'a str) -> BoxFuture<'a, Result<(MimeType, String), MagicError>> {
         Box::pin(async { 
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            Ok((MimeType::try_from("application/octet-stream").unwrap(), "data".to_string())) 
-        })
-    }
-    fn analyze_file<'a>(&'a self, _path: &'a Path) -> BoxFuture<'a, Result<(MimeType, String), MagicError>> {
-        Box::pin(async {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            Ok((MimeType::try_from("application/pdf").unwrap(), "PDF document".to_string()))
+            Ok((MimeType::try_from("application/pdf").unwrap(), "PDF document".to_string())) 
         })
     }
 }
 
 #[tokio::test]
 async fn test_analyze_path_timeout() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root = temp_dir.path().to_path_buf();
+    let file_path = root.join("test.pdf");
+    std::fs::write(&file_path, b"%PDF-1.4").unwrap();
+
     let repo: Arc<dyn MagicRepository> = Arc::new(SlowMagicRepo);
-    let sandbox: Arc<dyn SandboxService> = Arc::new(FakeSandbox);
+    let sandbox: Arc<dyn SandboxService> = Arc::new(FakeSandbox { root });
     let timeout = 1; // 1 second timeout
     let use_case = AnalyzePathUseCase::new(repo, sandbox, timeout);
     let request_id = RequestId::generate();
@@ -133,15 +139,5 @@ struct FailingMagicRepo;
 impl MagicRepository for FailingMagicRepo {
     fn analyze_buffer<'a>(&'a self, _data: &'a [u8], _filename: &'a str) -> BoxFuture<'a, Result<(MimeType, String), MagicError>> {
         Box::pin(async { Err(MagicError::AnalysisFailed("fail".to_string())) })
-    }
-    fn analyze_file<'a>(&'a self, path: &'a Path) -> BoxFuture<'a, Result<(MimeType, String), MagicError>> {
-        let path_owned = path.to_path_buf();
-        Box::pin(async move { 
-            if !path_owned.exists() {
-                Err(MagicError::FileNotFound(path_owned.to_string_lossy().to_string()))
-            } else {
-                Err(MagicError::AnalysisFailed("fail".to_string()))
-            }
-        })
     }
 }

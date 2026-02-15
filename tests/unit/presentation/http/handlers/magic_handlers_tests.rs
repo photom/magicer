@@ -115,3 +115,86 @@ async fn test_analyze_content_handler_large_file_streaming() {
     let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
     assert_eq!(json["result"]["mime_type"], "text/x-shellscript");
 }
+
+#[tokio::test]
+async fn test_analyze_content_handler_chunked_streaming() {
+    let magic_repo = Arc::new(FakeMagicRepository::new().unwrap());
+    let sandbox = Arc::new(PathSandbox::new(PathBuf::from("/tmp")));
+    let temp_storage = Arc::new(FakeTempStorageService::new(PathBuf::from("/tmp")));
+    let auth_service = Arc::new(FakeAuth);
+    let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
+    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage.clone(), auth_service, config));
+    let router = create_router(state)
+        .layer(middleware::from_fn(error_handler::handle_error))
+        .layer(middleware::from_fn(request_id::add_request_id));
+
+    temp_storage.reset();
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/magic/content?filename=test.txt")
+                .header("Authorization", "Basic YWRtaW46c2VjcmV0")
+                .header("Transfer-Encoding", "chunked")
+                .body(Body::from("small content"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    // Even for small content, if chunked, it should create a temp file
+    assert!(temp_storage.counter() > 0);
+}
+
+#[tokio::test]
+async fn test_analyze_content_handler_threshold_streaming() {
+    let magic_repo = Arc::new(FakeMagicRepository::new().unwrap());
+    let sandbox = Arc::new(PathSandbox::new(PathBuf::from("/tmp")));
+    let temp_storage = Arc::new(FakeTempStorageService::new(PathBuf::from("/tmp")));
+    let auth_service = Arc::new(FakeAuth);
+    
+    let mut config = magicer::infrastructure::config::server_config::ServerConfig::default();
+    config.analysis.large_file_threshold_mb = 1; // 1MB threshold
+    let config = Arc::new(config);
+    
+    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage.clone(), auth_service, config));
+    let router = create_router(state)
+        .layer(middleware::from_fn(error_handler::handle_error))
+        .layer(middleware::from_fn(request_id::add_request_id));
+
+    // Case 1: Below threshold
+    temp_storage.reset();
+    let response = router.clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/magic/content?filename=small.txt")
+                .header("Authorization", "Basic YWRtaW46c2VjcmV0")
+                .header("Content-Length", "100")
+                .body(Body::from(vec![0u8; 100]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(temp_storage.counter(), 0);
+
+    // Case 2: Above threshold
+    temp_storage.reset();
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/magic/content?filename=large.txt")
+                .header("Authorization", "Basic YWRtaW46c2VjcmV0")
+                .header("Content-Length", "2000000") // ~2MB
+                .body(Body::from(vec![0u8; 2000000]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(temp_storage.counter() > 0);
+}

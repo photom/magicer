@@ -34,7 +34,7 @@
 - Various file sizes: 1KB, 1MB, 10MB, 50MB.
 
 **Execution:**
-- Measure `analyze_buffer` and `analyze_file` time.
+- Measure `analyze_buffer` throughput.
 
 ## bench_concurrent_requests
 

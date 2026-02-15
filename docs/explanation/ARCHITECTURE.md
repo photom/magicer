@@ -341,7 +341,6 @@ classDiagram
     class MagicRepository {
         <<Trait>>
         analyze_buffer
-        analyze_file
     }
     
     class AuthenticationService {
@@ -397,7 +396,6 @@ graph TB
 | Method | Signature | Accepts | Purpose |
 |--------|-----------|---------|---------|
 | analyze_buffer | analyze_buffer(data, filename) | Any byte slice | Analyzes binary data from any source |
-| analyze_file | analyze_file(path) | File path | Analyzes file by path (libmagic opens file) |
 
 **Unified Byte Slice Acceptance:**
 

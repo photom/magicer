@@ -30,7 +30,8 @@ The decision logic (dispatching) was moved to the Presentation Layer (HTTP Handl
 **Assertions:**
 - Result is `Ok`.
 - `temp_storage.create_temp_file()` is called.
-- `MagicRepository::analyze_file` is called with the temp file path.
+- File mapped via `MmapHandler`.
+- `MagicRepository::analyze_buffer` is called with the mmap slice.
 
 ## test_handler_dispatch_to_in_memory
 **Purpose:** Verify the handler correctly chooses in-memory analysis for small non-chunked requests.

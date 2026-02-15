@@ -52,6 +52,14 @@ impl FakeTempStorageService {
             counter: AtomicUsize::new(0),
         }
     }
+
+    pub fn counter(&self) -> usize {
+        self.counter.load(Ordering::SeqCst)
+    }
+
+    pub fn reset(&self) {
+        self.counter.store(0, Ordering::SeqCst);
+    }
 }
 
 #[async_trait]

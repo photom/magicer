@@ -15,20 +15,6 @@
 - MIME type is "text/plain"
 - Description contains "ASCII text"
 
-## test_libmagic_analyze_pdf_file
-
-**Setup:**
-- `LibmagicRepository`.
-- A valid PDF file on disk.
-
-**Execution:**
-- Call `repository.analyze_file(path)`
-
-**Assertions:**
-- Result is `Ok`
-- MIME type is "application/pdf"
-- Description contains "PDF document"
-
 # Test Plan: PathSandbox
 
 ## test_sandbox_within_boundary

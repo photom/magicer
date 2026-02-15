@@ -40,19 +40,16 @@ classDiagram
         -Cookie cookie
         +new() Result~Self, InfrastructureError~
         +analyze_buffer(data: &[u8], filename: &str) Result~MagicResult, DomainError~
-        +analyze_file(path: &Path) Result~MagicResult, DomainError~
     }
     
     class MagicRepository {
         <<trait>>
         +analyze_buffer(data: &[u8], filename: &str) Result~MagicResult, DomainError~
-        +analyze_file(path: &Path) Result~MagicResult, DomainError~
     }
     
     class Cookie {
         <<external::magic>>
         +load(database: &[&str]) Result~(), Error~
-        +file(path: &str) Result~String, Error~
         +buffer(data: &[u8]) Result~String, Error~
         +set_flags(flags: CookieFlags) Result~(), Error~
     }
@@ -81,7 +78,7 @@ stateDiagram-v2
     Created --> Configured: Set flags for MIME type and encoding
     Configured --> Loaded: Load default database
     Loaded --> Ready: Ready for analysis
-    Ready --> Analyzing: Analyze buffer or file
+    Ready --> Analyzing: Analyze buffer
     Analyzing --> Ready: Return result
     Ready --> [*]: Drop
     
@@ -103,7 +100,6 @@ stateDiagram-v2
 |--------|------------|-------------|-------------|
 | `new` | - | `Result<Self, InfrastructureError>` | Initialize libmagic with default database |
 | `analyze_buffer` | `&self, data: &[u8], filename: &str` | `Result<MagicResult, DomainError>` | Analyze binary buffer |
-| `analyze_file` | `&self, path: &Path` | `Result<MagicResult, DomainError>` | Analyze file by path |
 
 ## Initialization Flow
 
@@ -155,48 +151,11 @@ sequenceDiagram
     end
 ```
 
-## analyze_file Implementation
-
-```mermaid
-sequenceDiagram
-    participant Caller
-    participant Repo as LibmagicRepository
-    participant Cookie as magic::Cookie
-    participant Blocking as tokio::task::spawn_blocking
-    participant FS as Filesystem
-    
-    Caller->>Repo: analyze_file(path)
-    Repo->>Repo: Validate path
-    Repo->>FS: Check file exists
-    alt File not found
-        FS-->>Repo: Not found
-        Repo-->>Caller: Err(DomainError::FileNotFound)
-    else File exists
-        Repo->>Blocking: Spawn blocking task
-        Blocking->>Cookie: file(path_str)
-        Cookie-->>Blocking: Result<String, Error>
-        alt Success
-            Blocking-->>Repo: Ok(MagicResult)
-            Repo-->>Caller: Ok(MagicResult)
-        else Error
-            Blocking-->>Repo: Err(magic::Error)
-            Repo->>Repo: Map to DomainError
-            Repo-->>Caller: Err(DomainError)
-        end
-    end
-```
-
 ## Error Mapping
 
 ```mermaid
 graph TD
     LibmagicErr["magic::Error"] --> Map[Error Mapping]
-    
-    Map --> NotFound[ErrorKind::NotFound]
-    NotFound --> DomainNotFound[DomainError::FileNotFound]
-    
-    Map --> Permission[ErrorKind::PermissionDenied]
-    Permission --> DomainPermission[DomainError::PermissionDenied]
     
     Map --> Encoding[Encoding detection failed]
     Encoding --> MagicErr[DomainError::MagicError::AnalysisFailed]
@@ -204,8 +163,6 @@ graph TD
     Map --> Unknown[Unknown error]
     Unknown --> MagicErr
     
-    style DomainNotFound fill:#FFB6C1
-    style DomainPermission fill:#FFB6C1
     style MagicErr fill:#FF9800
 ```
 
@@ -215,7 +172,6 @@ graph TD
 |------|---------|----------------|
 | `MIME_TYPE` | Return MIME type | `text/plain` |
 | `MIME_ENCODING` | Return character encoding | `us-ascii` |
-| `SYMLINK` | Follow symlinks | Analyze target file |
 | `ERROR` | Continue on errors | Partial results |
 | `NO_CHECK_*` | Skip specific checks | Performance optimization |
 
@@ -257,13 +213,9 @@ The LibmagicRepository is initialized and wrapped in an Arc for thread-safe shar
 
 When analyzing in-memory data such as a PNG file header (8 bytes starting with hex values 0x89, 0x50, 0x4E, 0x47), the analyze_buffer method is called with the byte slice and a filename hint. The method returns a MagicResult with the detected MIME type "image/png".
 
-### Analyze File by Path
-
-When analyzing a file by its filesystem path such as "/sandbox/documents/report.pdf", the analyze_file method is called with the path. The method returns a MagicResult with the MIME type detected from the file, such as "application/pdf".
-
 ### Error Handling
 
-When analyzing a file, various errors can occur. FileNotFound indicates the file doesn't exist at the specified path. PermissionDenied indicates insufficient permissions to read the file. MagicError indicates the analysis failed (e.g., corrupted file or unsupported format). Other domain errors may occur for unexpected conditions.
+When analyzing a buffer, errors can occur if the libmagic analysis fails (e.g., corrupted data or unsupported format). These errors are mapped to the DomainError::MagicError variant.
 
 ## Thread Safety
 
@@ -296,10 +248,6 @@ The with_database constructor accepts a custom database path parameter. It opens
 ### PNG Buffer Analysis Test
 
 A test creates a LibmagicRepository instance and provides a byte vector containing the PNG file signature (8 bytes: 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A). When analyzing this buffer with filename "test.png", the repository correctly identifies the MIME type as "image/png".
-
-### File Not Found Test
-
-A test creates a repository instance and attempts to analyze a non-existent file path "/nonexistent/file.txt". The analyze_file method returns a DomainError with the FileNotFound variant, correctly handling the missing file scenario.
 
 ## Design Rationale
 

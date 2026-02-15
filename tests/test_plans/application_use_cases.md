@@ -1,5 +1,33 @@
 # Test Plan: AnalyzeContentUseCase
 
+## test_analyze_in_memory_success
+
+**Setup:**
+- `AnalyzeContentUseCase`.
+- Small data stream.
+
+**Execution:**
+- Call `use_case.analyze_in_memory(request_id, filename, stream)`
+
+**Assertions:**
+- Result is `Ok`
+- `MagicRepository::analyze_buffer` called.
+
+## test_analyze_to_temp_file_success
+
+**Setup:**
+- `AnalyzeContentUseCase`.
+- Data stream.
+
+**Execution:**
+- Call `use_case.analyze_to_temp_file(request_id, filename, stream)`
+
+**Assertions:**
+- Result is `Ok`
+- `temp_storage.create_temp_file()` called.
+- `MmapHandler` used.
+- `MagicRepository::analyze_buffer` called with mmap slice.
+
 ## test_execute_with_small_content_returns_success
 
 **Setup:**
@@ -67,13 +95,14 @@
 **Assertions:**
 - Result is `Ok`
 - `SandboxService::resolve_path` called.
-- `MagicRepository::analyze_file` called with resolved path.
+- File opened and mapped via `MmapHandler`.
+- `MagicRepository::analyze_buffer` called with mmap slice.
 
 ## test_execute_with_missing_file_returns_error
 
 **Setup:**
 - `AnalyzePathUseCase`.
-- Mock repository returning `MagicError::FileNotFound`.
+- Missing file path.
 
 **Execution:**
 - Call `use_case.execute(...)`
