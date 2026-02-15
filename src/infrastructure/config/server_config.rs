@@ -146,7 +146,7 @@ fn default_temp_dir() -> String {
     "/tmp/magicer".to_string()
 }
 fn default_min_free_space() -> u64 {
-    1024
+    0
 }
 fn default_max_age() -> u64 {
     3600

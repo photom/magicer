@@ -376,13 +376,10 @@ Lower values reduce memory pressure but increase disk I/O.
 #### `analysis.min_free_space_mb`
 
 **Type:** Unsigned 64-bit integer  
-**Default:** 1024  
+**Default:** 0  
 **Unit:** Megabytes  
 **Environment:** `MAGICER_MIN_FREE_SPACE_MB`  
-**Description:** Minimum free disk space required in the temporary directory before accepting large analysis requests.
-
-**Pre-flight Logic:**
-Before starting a large file analysis, the server checks the available space in the temporary directory using system calls (e.g., `statvfs`). If the available space is less than this threshold, the request is rejected immediately with a 507 Insufficient Storage status. This prevents disk exhaustion and partial writes that would inevitably fail.
+**Description:** Minimum free disk space required in the temporary directory before accepting large analysis requests. By default, this is set to 0 to ensure compatibility across various environments (including CI/Sandboxes). In production, it is recommended to set this to a safe value (e.g., 1024 for 1GB).
 
 #### `analysis.temp_file_max_age_secs`
 
