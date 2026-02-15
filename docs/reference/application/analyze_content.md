@@ -33,8 +33,6 @@ classDiagram
         +new(repository, temp_storage, config) Self
         +analyze_in_memory(request_id, filename, stream) Result
         +analyze_to_temp_file(request_id, filename, stream) Result
-        +execute(request_id, filename, data) Result
-        +execute_from_file(request_id, filename, path) Result
     }
     
     class MagicResponse {
@@ -114,8 +112,6 @@ sequenceDiagram
 | `new` | repo, storage, config | `Self` | Constructor |
 | `analyze_in_memory` | id, name, stream | `Result` | Collects stream into buffer and analyzes |
 | `analyze_to_temp_file` | id, name, stream | `Result` | Streams to temp file and analyzes via mmap |
-| `execute` | id, name, data | `Result` | Direct buffer analysis (atomic operation) |
-| `execute_from_file` | id, name, path | `Result` | Direct file analysis (atomic operation) |
 
 ## Execution Process
 
@@ -123,17 +119,21 @@ The `AnalyzeContentUseCase` provides specialized methods for different data sour
 
 1. **In-Memory Streaming (`analyze_in_memory`)**:
    - Collects chunks from an async stream into a `Vec<u8>`.
-   - Once the stream is exhausted, it calls `execute()`.
+   - Rejects empty content.
+   - Once the stream is exhausted, it performs the core analysis logic.
    - Used for small fixed-length payloads.
 
 2. **File-Based Streaming (`analyze_to_temp_file`)**:
    - Initializes a temporary file (checking disk space first).
    - Streams chunks directly to disk.
-   - Synchronizes file state and calls `execute_from_file()`.
+   - Synchronizes file state.
+   - Opens the temporary file and memory-maps it.
+   - Rejects empty files.
+   - Performs the actual integration with `MagicRepository`.
    - Used for chunked encoding or large payloads.
 
-3. **Core Analysis (`execute` / `execute_from_file`)**:
-   - Performs the actual integration with `MagicRepository`.
+3. **Core Analysis (`perform_analysis` - private)**:
+   - Performs the integration with `MagicRepository::analyze_buffer`.
    - Applies the analysis timeout constraint.
    - Maps domain results to `MagicResult` entities.
 
@@ -154,7 +154,7 @@ The AnalyzeContentUseCase is initialized by providing a thread-safe reference to
 
 ### Executing Analysis
 
-To analyze content, a request object is created containing the binary data and the original filename. When the execute method is called with this request, the use case validates the input, delegates the actual magic analysis to the repository, and returns a formatted response.
+To analyze content, the appropriate streaming method (`analyze_in_memory` or `analyze_to_temp_file`) is called with the binary body stream and the original filename. The use case validates the input, performs the analysis, and returns a formatted response.
 
 ### Handling Failures
 

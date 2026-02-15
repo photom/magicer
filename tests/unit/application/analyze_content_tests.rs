@@ -99,32 +99,12 @@ async fn test_analyze_content_success() {
     let request_id = RequestId::generate();
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
     let data = b"%PDF-1.4";
+    let stream = futures_util::stream::iter(vec![Ok::<_, std::io::Error>(bytes::Bytes::from_static(data))]);
     
-    let result = use_case.execute(request_id, filename, data).await.unwrap();
+    let result = use_case.analyze_in_memory(request_id, filename, stream).await.unwrap();
     
     assert_eq!(result.mime_type().as_str(), "application/pdf");
     assert_eq!(result.description(), "PDF document");
-}
-
-#[tokio::test]
-async fn test_execute_from_file_success() {
-    let repo: Arc<dyn MagicRepository> = Arc::new(FakeMagicRepo);
-    let temp_storage: Arc<dyn TempStorageService> = Arc::new(FakeTempStorage);
-    let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let use_case = AnalyzeContentUseCase::new(repo, temp_storage, config);
-    let request_id = RequestId::generate();
-    let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
-    
-    // Create a temporary file for the test
-    let temp_dir = std::env::temp_dir();
-    let temp_path = temp_dir.join("test_execute_from_file.pdf");
-    std::fs::write(&temp_path, b"%PDF-1.4").unwrap();
-    
-    let result = use_case.execute_from_file(request_id, filename, &temp_path).await.unwrap();
-    
-    assert_eq!(result.mime_type().as_str(), "application/pdf");
-    
-    let _ = std::fs::remove_file(temp_path);
 }
 
 #[tokio::test]
@@ -135,12 +115,9 @@ async fn test_analyze_content_empty_rejected() {
     let use_case = AnalyzeContentUseCase::new(repo, temp_storage, config);
     let request_id = RequestId::generate();
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
-    let data = b"";
+    let stream = futures_util::stream::iter(std::iter::empty::<Result<bytes::Bytes, std::io::Error>>());
     
-    // Note: Our implementation doesn't currently explicitly reject empty content in use case, 
-    // it just passes it to libmagic. Let's see if we should add a check.
-    // Based on the test plan, it SHOULD be rejected.
-    let result = use_case.execute(request_id, filename, data).await;
+    let result = use_case.analyze_in_memory(request_id, filename, stream).await;
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(matches!(err, ApplicationError::BadRequest(_)));
@@ -161,8 +138,10 @@ async fn test_analyze_content_repository_failure() {
     let use_case = AnalyzeContentUseCase::new(repo, temp_storage, config);
     let request_id = RequestId::generate();
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
+    let data = b"some data";
+    let stream = futures_util::stream::iter(vec![Ok::<_, std::io::Error>(bytes::Bytes::from_static(data))]);
     
-    let result = use_case.execute(request_id, filename, b"some data").await;
+    let result = use_case.analyze_in_memory(request_id, filename, stream).await;
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(err.to_string().contains("Analysis failed: forced failure"));
@@ -188,8 +167,10 @@ async fn test_analyze_content_timeout() {
     let use_case = AnalyzeContentUseCase::new(repo, temp_storage, config);
     let request_id = RequestId::generate();
     let filename = WindowsCompatibleFilename::new("test.pdf").unwrap();
+    let data = b"some data";
+    let stream = futures_util::stream::iter(vec![Ok::<_, std::io::Error>(bytes::Bytes::from_static(data))]);
     
-    let result = use_case.execute(request_id, filename, b"some data").await;
+    let result = use_case.analyze_in_memory(request_id, filename, stream).await;
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert_eq!(err.status_code(), axum::http::StatusCode::GATEWAY_TIMEOUT);

@@ -7,7 +7,6 @@ use crate::domain::value_objects::request_id::RequestId;
 use crate::infrastructure::config::server_config::ServerConfig;
 use crate::infrastructure::filesystem::mmap::MmapHandler;
 use futures_util::{Stream, StreamExt};
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -31,35 +30,6 @@ impl AnalyzeContentUseCase {
         }
     }
 
-    pub async fn execute(
-        &self,
-        request_id: RequestId,
-        filename: WindowsCompatibleFilename,
-        data: &[u8],
-    ) -> Result<MagicResult, ApplicationError> {
-        if data.is_empty() {
-            return Err(ApplicationError::BadRequest(
-                "Content cannot be empty".to_string(),
-            ));
-        }
-
-        let timeout_secs = self.config.server.timeouts.analysis_timeout_secs;
-
-        let (mime_type, description) = timeout(
-            Duration::from_secs(timeout_secs),
-            self.magic_repo.analyze_buffer(data, filename.as_str()),
-        )
-        .await
-        .map_err(|_| ApplicationError::Timeout)??;
-
-        Ok(MagicResult::new(
-            request_id,
-            filename,
-            mime_type,
-            description,
-        ))
-    }
-
     pub async fn analyze_in_memory<S, E>(
         &self,
         request_id: RequestId,
@@ -71,7 +41,12 @@ impl AnalyzeContentUseCase {
         E: std::fmt::Display,
     {
         let buffer = self.stream_to_buffer(stream).await?;
-        self.execute(request_id, filename, &buffer).await
+        if buffer.is_empty() {
+            return Err(ApplicationError::BadRequest(
+                "Content cannot be empty".to_string(),
+            ));
+        }
+        self.perform_analysis(request_id, filename, &buffer).await
     }
 
     pub async fn analyze_to_temp_file<S, E>(
@@ -89,8 +64,45 @@ impl AnalyzeContentUseCase {
             ApplicationError::InternalError(format!("Failed to sync temp file: {}", e))
         })?;
 
-        self.execute_from_file(request_id, filename, tf.path())
+        let file = std::fs::File::open(tf.path()).map_err(|e| {
+            ApplicationError::InternalError(format!("Failed to open file for analysis: {}", e))
+        })?;
+
+        let mmap = MmapHandler::new(&file).map_err(|e| {
+            ApplicationError::InternalError(format!("Failed to mmap file for analysis: {}", e))
+        })?;
+
+        if mmap.as_slice().is_empty() {
+            return Err(ApplicationError::BadRequest(
+                "Content cannot be empty".to_string(),
+            ));
+        }
+
+        self.perform_analysis(request_id, filename, mmap.as_slice())
             .await
+    }
+
+    async fn perform_analysis(
+        &self,
+        request_id: RequestId,
+        filename: WindowsCompatibleFilename,
+        data: &[u8],
+    ) -> Result<MagicResult, ApplicationError> {
+        let timeout_secs = self.config.server.timeouts.analysis_timeout_secs;
+
+        let (mime_type, description) = timeout(
+            Duration::from_secs(timeout_secs),
+            self.magic_repo.analyze_buffer(data, filename.as_str()),
+        )
+        .await
+        .map_err(|_| ApplicationError::Timeout)??;
+
+        Ok(MagicResult::new(
+            request_id,
+            filename,
+            mime_type,
+            description,
+        ))
     }
 
     async fn stream_to_buffer<S, E>(&self, mut stream: S) -> Result<Vec<u8>, ApplicationError>
@@ -138,37 +150,5 @@ impl AnalyzeContentUseCase {
         self.temp_storage.create_temp_file().await.map_err(|e| {
             ApplicationError::InternalError(format!("Failed to create temp file: {}", e))
         })
-    }
-
-    pub async fn execute_from_file(
-        &self,
-        request_id: RequestId,
-        filename: WindowsCompatibleFilename,
-        path: &Path,
-    ) -> Result<MagicResult, ApplicationError> {
-        let file = std::fs::File::open(path).map_err(|e| {
-            ApplicationError::InternalError(format!("Failed to open file for analysis: {}", e))
-        })?;
-
-        let mmap = MmapHandler::new(&file).map_err(|e| {
-            ApplicationError::InternalError(format!("Failed to mmap file for analysis: {}", e))
-        })?;
-
-        let timeout_secs = self.config.server.timeouts.analysis_timeout_secs;
-
-        let (mime_type, description) = timeout(
-            Duration::from_secs(timeout_secs),
-            self.magic_repo
-                .analyze_buffer(mmap.as_slice(), filename.as_str()),
-        )
-        .await
-        .map_err(|_| ApplicationError::Timeout)??;
-
-        Ok(MagicResult::new(
-            request_id,
-            filename,
-            mime_type,
-            description,
-        ))
     }
 }
