@@ -13,12 +13,6 @@ Linux File Magic API Server - A REST API for file type identification using libm
 - [License](#license)
 - [References](#references)
 
-## Quick Start
-
-**Status:** Design phase complete, implementation ready to begin.
-
-This is a learning project ("etude") implementing a production-grade REST API that provides file magic analysis through HTTP endpoints.
-
 ## Documentation
 
 Documentation organized by the [Diátaxis framework](https://diataxis.fr/):
