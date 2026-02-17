@@ -23,6 +23,7 @@ fn setup_test_server(config_override: Option<Box<dyn FnOnce(&mut ServerConfig)>>
     std::fs::create_dir_all(&test_dir).unwrap();
     
     let sandbox = Arc::new(PathSandbox::new(test_dir.clone()));
+    // codeql[rust/hard-coded-cryptographic-value]: suppress
     let auth_service = Arc::new(BasicAuthService::new("admin", "secret"));
     let temp_storage = Arc::new(FakeTempStorageService::new(test_dir.join("temp")));
     

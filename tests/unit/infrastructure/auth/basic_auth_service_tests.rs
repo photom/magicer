@@ -5,7 +5,9 @@ use std::time::Instant;
 
 #[tokio::test]
 async fn test_basic_auth_service_success() {
+    // codeql[rust/hard-coded-cryptographic-value]: suppress
     let service = BasicAuthService::new("admin", "password");
+    // codeql[rust/hard-coded-cryptographic-value]: suppress
     let creds = BasicAuthCredentials::new("admin", "password").unwrap();
     
     let result = service.verify_credentials(&creds).await;
@@ -14,7 +16,9 @@ async fn test_basic_auth_service_success() {
 
 #[tokio::test]
 async fn test_basic_auth_service_invalid_password() {
+    // codeql[rust/hard-coded-cryptographic-value]: suppress
     let service = BasicAuthService::new("admin", "password");
+    // codeql[rust/hard-coded-cryptographic-value]: suppress
     let creds = BasicAuthCredentials::new("admin", "wrong").unwrap();
     
     let result = service.verify_credentials(&creds).await;
@@ -23,7 +27,9 @@ async fn test_basic_auth_service_invalid_password() {
 
 #[tokio::test]
 async fn test_basic_auth_service_invalid_username() {
+    // codeql[rust/hard-coded-cryptographic-value]: suppress
     let service = BasicAuthService::new("admin", "password");
+    // codeql[rust/hard-coded-cryptographic-value]: suppress
     let creds = BasicAuthCredentials::new("wrong", "password").unwrap();
     
     let result = service.verify_credentials(&creds).await;
@@ -32,9 +38,11 @@ async fn test_basic_auth_service_invalid_username() {
 
 #[tokio::test]
 async fn test_basic_auth_service_timing_resistance() {
+    // codeql[rust/hard-coded-cryptographic-value]: suppress
     let service = BasicAuthService::new("admin", "verylongpasswordthatmighttakesometimetocompare");
-    
+    // codeql[rust/hard-coded-cryptographic-value]: suppress
     let creds_wrong_user = BasicAuthCredentials::new("wrong", "password").unwrap();
+    // codeql[rust/hard-coded-cryptographic-value]: suppress
     let creds_wrong_pass = BasicAuthCredentials::new("admin", "wrong").unwrap();
     
     // Warm up

@@ -20,6 +20,7 @@ fn setup_bench_server() -> TestServer {
     std::fs::create_dir_all(temp_dir).unwrap();
     let sandbox = Arc::new(PathSandbox::new(PathBuf::from(temp_dir)));
     let temp_storage = Arc::new(FsTempStorageService::new(PathBuf::from(temp_dir).join("temp")));
+    // codeql[rust/hard-coded-cryptographic-value]: suppress
     let auth_service = Arc::new(BasicAuthService::new("admin", "secret"));
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
     let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, config));
