@@ -77,3 +77,15 @@ The following skills provide specialized guidance for specific tasks. Invoke the
 - **`/logging-principles`** - Structured logging, telemetry, data privacy
 
 **Usage**: Skills are not auto-loaded. Invoke explicitly when their domain knowledge is needed.
+
+## Implementation Policy
+
+- **canon-tdd is mandatory**: Invoke the **`/canon-tdd`** skill before any implementation work (new features, bug fixes, refactoring). Do not write production code without first loading this skill and following the Red-Green-Refactor cycle.
+
+## Documentation Policy
+
+- **docs-first is mandatory**: Invoke the **`/docs-first`** skill before creating or updating any document in the `docs/` directory. Do not write or modify documentation without first loading this skill.
+
+## Logging & Telemetry Policy
+
+- **logging-principles is mandatory**: Invoke the **`/logging-principles`** skill before any work that involves logging, structured telemetry, metrics, traces, or observability. Do not add, modify, or review logging/telemetry code without first loading this skill.
