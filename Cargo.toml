@@ -68,7 +68,7 @@ name = "e2e_benchmark"
 harness = false
 
 [build-dependencies]
-cc = "1.2.56"
+cc = "1.2.60"
 num_cpus = "1.17"
 
 [profile.release]
