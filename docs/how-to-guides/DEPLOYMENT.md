@@ -49,6 +49,18 @@ apk add --no-cache libmagic file
 
 ## 2. Build Configuration
 
+### Minimum Rust Version
+
+This project uses **Rust Edition 2024**, which requires **Rust 1.85 or later**.
+
+```bash
+# Verify your toolchain
+rustc --version  # must be >= 1.85.0
+
+# Update if needed
+rustup update stable
+```
+
 ### Development Build
 ```bash
 cargo build --bin magicer
@@ -194,30 +206,52 @@ sudo chown root:root /etc/magicer/credentials.env
 
 ## 5. Docker Deployment
 
+### Build Script Behaviour
+
+`build.rs` downloads and statically compiles **zlib** and **libmagic** at build time. This means:
+
+- The builder image must have `curl`, `gcc`, and `make` available — `build-essential` covers the latter two.
+- `libmagic-dev` is **not** needed in the builder stage; the system package is bypassed entirely.
+- The runtime image still needs `file` (provides the magic database `/usr/share/misc/magic.mgc`).
+- Outbound HTTPS access to `github.com` and `astron.com` is required during the build.
+
 ### Dockerfile
 
 **Multi-stage build:**
 ```dockerfile
 # Build stage
-FROM rust:1.75-slim-bookworm AS builder
+FROM rust:1.85-slim-bookworm AS builder
 
 # Install build dependencies
+# build.rs compiles zlib and libmagic statically, so curl + build-essential
+# are required. libmagic-dev is NOT needed.
 RUN apt-get update && apt-get install -y \
-    libmagic-dev \
     pkg-config \
+    curl \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
 # Cache dependencies
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release && rm -rf src
+RUN mkdir src && echo "fn main() {}" > src/main.rs && \
+    mkdir -p benches && \
+    echo "fn main() {}" > benches/validation_benchmark.rs && \
+    echo "fn main() {}" > benches/magic_analysis_benchmark.rs && \
+    echo "fn main() {}" > benches/e2e_benchmark.rs
+RUN cargo build --release && rm -rf src benches
 
 # Build application
 COPY . .
 RUN touch src/main.rs  # Force rebuild
 RUN cargo build --release --bin magicer
+
+# Extract the magic database built alongside libmagic 5.46 to a predictable
+# path. The .mgc format is version-specific (record size 432 bytes for 5.46),
+# so the system libmagic1 database cannot be used.
+RUN find /build/target/release/build -path "*/install/share/misc/magic.mgc" \
+    | head -1 | xargs -I{} cp {} /build/magic.mgc
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -227,6 +261,7 @@ RUN apt-get update && apt-get install -y \
     libmagic1 \
     file \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -236,9 +271,15 @@ RUN useradd -m -u 1000 -s /bin/bash magicer
 RUN mkdir -p /etc/magicer /var/lib/magicer/files /var/log/magicer && \
     chown -R magicer:magicer /var/lib/magicer /var/log/magicer
 
-# Copy binary
+# Copy binary and version-matched magic database
 COPY --from=builder /build/target/release/magicer /usr/local/bin/magicer
+COPY --from=builder /build/magic.mgc /usr/share/misc/magic.mgc
 RUN chmod +x /usr/local/bin/magicer
+
+# Point libmagic to the version-matched database copied from the build stage.
+# The .mgc format is version-specific; the system libmagic1 database is
+# incompatible with the statically compiled libmagic 5.46.
+ENV MAGIC=/usr/share/misc/magic.mgc
 
 # Switch to non-root user
 USER magicer
@@ -249,18 +290,15 @@ EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["/usr/local/bin/magicer", "health-check"] || exit 1
+    CMD curl -f http://localhost:8080/v1/ping || exit 1
 
 # Run server
-CMD ["/usr/local/bin/magicer", "serve"]
+CMD ["/usr/local/bin/magicer"]
 ```
 
 ### Docker Compose
 
 ```yaml
-# docker-compose.yml
-version: '3.8'
-
 services:
   magicer:
     build:
@@ -278,9 +316,11 @@ services:
       - MAGICER_PORT=8080
       - RUST_LOG=magicer=info
       - MAGICER_LOG_FORMAT=json
+      - MAGIC=/usr/share/misc/magic.mgc
     
     env_file:
-      - .env.production
+      - path: .env.production
+        required: false
     
     volumes:
       - ./config/config.toml:/etc/magicer/config.toml:ro
@@ -311,23 +351,29 @@ volumes:
   magicer-logs:
 ```
 
+> **Production credentials:** Create `.env.production` before deploying to set authentication credentials:
+> ```bash
+> cat > .env.production <<'EOF'
+> MAGICER_AUTH_USERNAME=api_user
+> MAGICER_AUTH_PASSWORD=<strong-random-password>
+> EOF
+> chmod 600 .env.production
+> ```
+> The file is optional for local development — if absent, the service starts without it.
+
 ### Running with Docker
 
+> **Note:** The legacy `docker build` command is deprecated. Use `docker buildx build` (BuildKit) instead. Install the buildx plugin if not already present: https://docs.docker.com/go/buildx/
+
 ```bash
-# Build image
-docker build -t magicer:latest .
+# Build image (BuildKit)
+docker buildx build -t magicer:latest .
 
 # Run container
-docker run -d \
-  --name magicer \
-  -p 8080:8080 \
-  -e MAGICER_AUTH_USERNAME=admin \
-  -e MAGICER_AUTH_PASSWORD=secret \
-  -v $(pwd)/config.toml:/etc/magicer/config.toml:ro \
-  magicer:latest
+docker compose up -d
 
 # View logs
-docker logs -f magicer
+docker compose logs -f magicer
 
 # Health check
 curl http://localhost:8080/v1/ping
@@ -354,7 +400,7 @@ User=magicer
 Group=magicer
 
 # Binary location
-ExecStart=/usr/local/bin/magicer serve
+ExecStart=/usr/local/bin/magicer
 
 # Configuration
 Environment="MAGICER_CONFIG_PATH=/etc/magicer/config.toml"
