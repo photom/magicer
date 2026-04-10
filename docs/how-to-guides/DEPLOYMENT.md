@@ -183,6 +183,11 @@ export MAGICER_SANDBOX_DIR="/var/lib/magicer/files"
 export RUST_LOG="magicer=info,tower_http=debug"
 export MAGICER_LOG_FORMAT="json"
 
+# OpenTelemetry (OTLP/gRPC)
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"       # collector address
+export OTEL_EXPORTER_OTLP_CERTIFICATE="/path/to/ca.crt"          # TLS — required in production
+export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=staging"  # extra resource labels
+
 # Performance tuning
 export TOKIO_WORKER_THREADS="4"
 ```
@@ -281,6 +286,9 @@ RUN chmod +x /usr/local/bin/magicer
 # incompatible with the statically compiled libmagic 5.46.
 ENV MAGIC=/usr/share/misc/magic.mgc
 
+# Default OTel collector endpoint — override at runtime via env var or compose.
+ENV OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+
 # Switch to non-root user
 USER magicer
 WORKDIR /home/magicer
@@ -317,7 +325,8 @@ services:
       - RUST_LOG=magicer=info
       - MAGICER_LOG_FORMAT=json
       - MAGIC=/usr/share/misc/magic.mgc
-    
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317  # point directly at Jaeger
+
     env_file:
       - path: .env.production
         required: false
@@ -345,6 +354,16 @@ services:
       - ALL
     cap_add:
       - NET_BIND_SERVICE
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    ports:
+      - "16686:16686"  # Jaeger UI  →  http://localhost:16686
+      - "4317:4317"    # gRPC receiver (otel-collector → jaeger)
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    restart: unless-stopped
 
 volumes:
   magicer-files:
