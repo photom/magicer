@@ -7,6 +7,7 @@ use axum::{
     Router,
 };
 use std::sync::Arc;
+use tower_http::trace::TraceLayer;
 
 pub fn create_router(state: Arc<AppState>) -> Router {
     let api_routes = Router::new()
@@ -21,5 +22,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/v1/ping", get(health_handlers::ping))
         .nest("/v1/magic", api_routes)
+        .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

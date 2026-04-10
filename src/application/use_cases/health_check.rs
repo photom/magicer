@@ -1,5 +1,6 @@
 use crate::application::errors::ApplicationError;
 
+#[derive(Default)]
 pub struct HealthCheckUseCase;
 
 impl HealthCheckUseCase {

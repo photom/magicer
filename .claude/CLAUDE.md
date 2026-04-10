@@ -81,6 +81,7 @@ The following skills provide specialized guidance for specific tasks. Invoke the
 ## Implementation Policy
 
 - **canon-tdd is mandatory**: Invoke the **`/canon-tdd`** skill before any implementation work (new features, bug fixes, refactoring). Do not write production code without first loading this skill and following the Red-Green-Refactor cycle.
+- **Test plan first (Phase 0)**: Before writing any code, write the full test list as a checklist and get it confirmed. No implementation begins until the test plan is documented. This is the most important step — do not skip it.
 
 ## Documentation Policy
 

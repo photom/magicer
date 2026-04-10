@@ -32,6 +32,7 @@ graph TB
     Lookup --> R3[📚 Server Specification<br/>reference/HTTP_SERVER.md]
     Lookup --> R4[📚 Project Structure<br/>reference/PROJECT_STRUCTURE.md]
     Lookup --> R5[📚 Testing Strategy<br/>reference/TESTING_STRATEGY.md]
+    Lookup --> R6[📚 Observability / OTel<br/>reference/OBSERVABILITY.md]
     
     Understand --> E1[💡 Architecture Design<br/>explanation/ARCHITECTURE.md]
     Understand --> E2[💡 Design Summary<br/>explanation/DESIGN_SUMMARY.md]
@@ -77,6 +78,8 @@ graph TB
 | Write tests | [TESTING_STRATEGY.md](reference/TESTING_STRATEGY.md) |
 | Understand architecture | [ARCHITECTURE.md](explanation/ARCHITECTURE.md) |
 | See complete design | [DESIGN_SUMMARY.md](explanation/DESIGN_SUMMARY.md) |
+| Set up observability / OTel | [OBSERVABILITY.md](reference/OBSERVABILITY.md) |
+| Review test plans | [test_plans/](test_plans/) |
 
 ## By Type
 
@@ -93,6 +96,7 @@ graph TB
 - [API Documentation](https://photom.github.io/magicer/) ([source](../api/v1/openapi.yaml))
 - [CONFIG.md](reference/CONFIG.md)
 - [HTTP_SERVER.md](reference/HTTP_SERVER.md)
+- [OBSERVABILITY.md](reference/OBSERVABILITY.md)
 - [PROJECT_STRUCTURE.md](reference/PROJECT_STRUCTURE.md)
 - [TESTING_STRATEGY.md](reference/TESTING_STRATEGY.md)
 

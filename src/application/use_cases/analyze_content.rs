@@ -30,6 +30,14 @@ impl AnalyzeContentUseCase {
         }
     }
 
+    #[tracing::instrument(
+        name = "use_case.analyze_content_in_memory",
+        fields(
+            request_id = %request_id,
+            analysis.type = "content_in_memory",
+        ),
+        skip(self, filename, stream),
+    )]
     pub async fn analyze_in_memory<S, E>(
         &self,
         request_id: RequestId,
@@ -49,6 +57,14 @@ impl AnalyzeContentUseCase {
         self.perform_analysis(request_id, filename, &buffer).await
     }
 
+    #[tracing::instrument(
+        name = "use_case.analyze_content_to_file",
+        fields(
+            request_id = %request_id,
+            analysis.type = "content_to_file",
+        ),
+        skip(self, filename, stream),
+    )]
     pub async fn analyze_to_temp_file<S, E>(
         &self,
         request_id: RequestId,
@@ -82,6 +98,11 @@ impl AnalyzeContentUseCase {
             .await
     }
 
+    #[tracing::instrument(
+        name = "repo.analyze_buffer",
+        fields(request_id = %request_id),
+        skip(self, filename, data),
+    )]
     async fn perform_analysis(
         &self,
         request_id: RequestId,

@@ -1,3 +1,4 @@
+use crate::application::errors::ApplicationError;
 use crate::domain::value_objects::filename::WindowsCompatibleFilename;
 use crate::domain::value_objects::request_id::RequestId;
 use crate::presentation::http::responses::error_response::ErrorResponse;
@@ -10,20 +11,45 @@ use axum::{
     response::IntoResponse,
     Extension, Json,
 };
+use opentelemetry::KeyValue;
 use serde::Deserialize;
 use std::sync::Arc;
+use std::time::Instant;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct AnalyzeQuery {
     pub filename: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct AnalyzePathQuery {
     pub filename: String,
     pub path: String,
 }
 
+/// Map an [`ApplicationError`] to the `error.kind` string value as defined in
+/// `docs/reference/OBSERVABILITY.md` §7.2.
+fn error_kind(e: &ApplicationError) -> &'static str {
+    match e {
+        ApplicationError::Timeout => "timeout",
+        ApplicationError::BadRequest(_) => "bad_request",
+        ApplicationError::NotFound(_) => "not_found",
+        ApplicationError::InternalError(_) | ApplicationError::UnprocessableEntity(_) => "internal",
+        ApplicationError::InsufficientStorage(_) => "insufficient_storage",
+        ApplicationError::Unauthorized(_) => "unauthorized",
+        ApplicationError::Forbidden(_) => "forbidden",
+    }
+}
+
+#[tracing::instrument(
+    name = "handler.analyze_content",
+    fields(
+        analysis.filename = %query.filename,
+        analysis.strategy = tracing::field::Empty,
+        error.kind = tracing::field::Empty,
+    ),
+    skip(state, headers, body, request_id, query),
+)]
 pub async fn analyze_content(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -61,6 +87,18 @@ pub async fn analyze_content(
         }
     };
 
+    let strategy_str = if force_to_file { "temp_file" } else { "in_memory" };
+    tracing::Span::current().record("analysis.strategy", strategy_str);
+
+    // Track active requests
+    let active_labels = [
+        KeyValue::new("http.method", "POST"),
+        KeyValue::new("http.route", "/v1/magic/content"),
+    ];
+    state.metrics.http_active_requests.add(1, &active_labels);
+
+    let start = Instant::now();
+
     let result = if force_to_file {
         state
             .analyze_content_use_case
@@ -73,19 +111,50 @@ pub async fn analyze_content(
             .await
     };
 
+    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+    let analysis_type = if force_to_file {
+        "content_to_file"
+    } else {
+        "content_in_memory"
+    };
+
+    state.metrics.http_active_requests.add(-1, &active_labels);
+
     match result {
-        Ok(res) => (StatusCode::OK, Json(MagicResponse::from(res))).into_response(),
-        Err(e) => (
-            e.status_code(),
-            Json(ErrorResponse {
-                error: format!("Analysis failed: {}", e),
-                request_id: Some(request_id.as_str().to_string()),
-            }),
-        )
-            .into_response(),
+        Ok(res) => {
+            state.metrics.analysis_duration.record(
+                elapsed_ms,
+                &[KeyValue::new("analysis.type", analysis_type)],
+            );
+            (StatusCode::OK, Json(MagicResponse::from(res))).into_response()
+        }
+        Err(e) => {
+            let kind = error_kind(&e);
+            tracing::Span::current().record("error.kind", kind);
+            state
+                .metrics
+                .analysis_errors
+                .add(1, &[KeyValue::new("error.kind", kind)]);
+            (
+                e.status_code(),
+                Json(ErrorResponse {
+                    error: format!("Analysis failed: {}", e),
+                    request_id: Some(request_id.as_str().to_string()),
+                }),
+            )
+                .into_response()
+        }
     }
 }
 
+#[tracing::instrument(
+    name = "handler.analyze_path",
+    fields(
+        analysis.filename = %query.filename,
+        error.kind = tracing::field::Empty,
+    ),
+    skip(state, request_id, query),
+)]
 pub async fn analyze_path(
     State(state): State<Arc<AppState>>,
     Query(query): Query<AnalyzePathQuery>,
@@ -125,13 +194,21 @@ pub async fn analyze_path(
         .await
     {
         Ok(result) => (StatusCode::OK, Json(MagicResponse::from(result))).into_response(),
-        Err(e) => (
-            e.status_code(),
-            Json(ErrorResponse {
-                error: format!("Analysis failed: {}", e),
-                request_id: Some(request_id.as_str().to_string()),
-            }),
-        )
-            .into_response(),
+        Err(e) => {
+            let kind = error_kind(&e);
+            tracing::Span::current().record("error.kind", kind);
+            state
+                .metrics
+                .analysis_errors
+                .add(1, &[KeyValue::new("error.kind", kind)]);
+            (
+                e.status_code(),
+                Json(ErrorResponse {
+                    error: format!("Analysis failed: {}", e),
+                    request_id: Some(request_id.as_str().to_string()),
+                }),
+            )
+                .into_response()
+        }
     }
 }

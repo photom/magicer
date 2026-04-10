@@ -23,7 +23,8 @@ fn setup_bench_server() -> TestServer {
     // codeql[rust/hard-coded-cryptographic-value]: suppress
     let auth_service = Arc::new(BasicAuthService::new("admin", "secret"));
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, config));
+    let metrics = Arc::new(magicer::infrastructure::telemetry::metrics::AppMetrics::new(&opentelemetry::global::meter("bench")));
+    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, config, metrics));
     let app = create_router(state)
         .layer(middleware::from_fn(request_id::add_request_id));
     TestServer::new(app).unwrap()

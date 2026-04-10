@@ -6,6 +6,7 @@ use crate::domain::services::authentication_service::AuthenticationService;
 use crate::domain::services::sandbox_service::SandboxService;
 use crate::domain::services::temp_storage::TempStorageService;
 use crate::infrastructure::config::server_config::ServerConfig;
+use crate::infrastructure::telemetry::metrics::AppMetrics;
 use std::sync::Arc;
 
 pub struct AppState {
@@ -14,6 +15,8 @@ pub struct AppState {
     pub health_check_use_case: HealthCheckUseCase,
     pub auth_service: Arc<dyn AuthenticationService>,
     pub config: Arc<ServerConfig>,
+    /// Shared OTel metric instruments for all request handlers.
+    pub metrics: Arc<AppMetrics>,
 }
 
 impl AppState {
@@ -23,6 +26,7 @@ impl AppState {
         temp_storage: Arc<dyn TempStorageService>,
         auth_service: Arc<dyn AuthenticationService>,
         config: Arc<ServerConfig>,
+        metrics: Arc<AppMetrics>,
     ) -> Self {
         let timeout = config.server.timeouts.analysis_timeout_secs;
         Self {
@@ -35,6 +39,7 @@ impl AppState {
             health_check_use_case: HealthCheckUseCase::new(),
             auth_service,
             config,
+            metrics,
         }
     }
 }

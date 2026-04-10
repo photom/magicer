@@ -41,7 +41,8 @@ async fn build_app(auth_service: Arc<dyn AuthenticationService>) -> Router {
     let sandbox = Arc::new(PathSandbox::new(PathBuf::from("/tmp")));
     let temp_storage = Arc::new(FakeTempStorageService::new(PathBuf::from("/tmp")));
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, config));
+    let metrics = Arc::new(magicer::infrastructure::telemetry::metrics::AppMetrics::new(&opentelemetry::global::meter("test")));
+    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, config, metrics));
     
     Router::new()
         .route("/", get(|| async { StatusCode::OK }))

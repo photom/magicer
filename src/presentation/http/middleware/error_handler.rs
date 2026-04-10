@@ -20,8 +20,8 @@ pub async fn handle_error(request: Request, next: Next) -> Response {
     // If the response is already JSON, we assume it's already formatted correctly.
     // Otherwise, we wrap it in our standard ErrorResponse.
     let content_type = response.headers().get(axum::http::header::CONTENT_TYPE);
-    let is_json = content_type.map_or(false, |v| {
-        v.to_str().map_or(false, |s| s.contains("application/json"))
+    let is_json = content_type.is_some_and(|v| {
+        v.to_str().is_ok_and(|s| s.contains("application/json"))
     });
 
     if is_json {

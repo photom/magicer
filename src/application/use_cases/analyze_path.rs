@@ -29,6 +29,14 @@ impl AnalyzePathUseCase {
         }
     }
 
+    #[tracing::instrument(
+        name = "use_case.analyze_path",
+        fields(
+            request_id = %request_id,
+            analysis.type = "path",
+        ),
+        skip(self, filename, path),
+    )]
     pub async fn execute(
         &self,
         request_id: RequestId,

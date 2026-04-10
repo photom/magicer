@@ -16,10 +16,10 @@ impl RelativePath {
         }
 
         let parts: Vec<&str> = path.split('/').collect();
-        if parts.iter().any(|&p| p == "..") {
+        if parts.contains(&"..") {
             return Err(ValidationError::PathTraversal);
         }
-        if parts.iter().any(|&p| p == ".") {
+        if parts.contains(&".") {
             return Err(ValidationError::InvalidPath);
         }
 

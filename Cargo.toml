@@ -25,6 +25,12 @@ clap = { version = "4.5", features = ["derive", "env"] }
 # Observability
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+opentelemetry = "0.27"
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "logs"] }
+opentelemetry-otlp = { version = "0.27", features = ["tonic", "logs"] }
+opentelemetry-semantic-conventions = "0.27"
+tracing-opentelemetry = "0.28"
+opentelemetry-appender-tracing = { version = "0.27", features = ["log"] }
 
 # Security
 subtle = "2.6"

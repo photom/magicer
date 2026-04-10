@@ -54,6 +54,64 @@ For on-premise or client applications, ensure logs provide necessary information
 | **WARN** | External 5xx errors (Permanent/Input errors), Config validation failure | Resource ID, Endpoint, Error line/item, Failed input values. |
 | **ERROR** | Unhandled exceptions, External 4xx errors (Temporary/System errors), App crash | Resource ID, Error content, Stack trace (on a separate line). |
 
+## 3. OpenTelemetry Integration (Rust / Axum)
+
+### Instrumentation Type
+
+Rust has no auto-instrumentation agent. The canonical approach is **manual instrumentation via the `tracing-opentelemetry` bridge**. This reuses the existing `tracing` ecosystem and exports all three OTel signals — Traces, Metrics, and Logs — through a single OTLP pipeline. No existing log calls need to be rewritten.
+
+### The Three Signals
+
+#### Traces
+
+Instrument at each Clean Architecture layer boundary to produce a natural span hierarchy per request:
+
+| Layer | Span scope | Key attributes to attach |
+| :--- | :--- | :--- |
+| Presentation (handlers) | Per-request root span | `http.method`, `http.route`, `request_id` |
+| Application (use cases) | Per use-case span | `use_case`, `result` |
+| Infrastructure (repos/services) | Per I/O operation span | operation type, resource identifier |
+
+- Use `tower-http`'s `TraceLayer` to create root spans automatically for each HTTP request.
+- Propagate `request_id` as a span attribute at every layer, not just at the handler level.
+- Span names follow the pattern `{layer}.{operation}` in snake_case (e.g., `handler.analyze_content`, `use_case.analyze_content`, `repo.identify_mime`).
+
+#### Metrics
+
+Emit the following minimum set at the infrastructure/presentation boundary:
+
+| Metric | Type | Key labels |
+| :--- | :--- | :--- |
+| HTTP request duration | Histogram | `method`, `route`, `status_code` |
+| Active in-flight requests | UpDownCounter | `method`, `route` |
+| Analysis operation duration | Histogram | `analysis_type` (`content` / `path`) |
+| Analysis errors | Counter | `error_kind` |
+| Temp file cleanup duration | Histogram | — |
+
+Follow OTel semantic conventions for naming: `http.server.*` for HTTP-level metrics, `app.*` for domain-specific metrics.
+
+#### Logs
+
+Wire `opentelemetry-appender-tracing` as a `tracing::Layer` so all existing `info!` / `warn!` / `error!` calls automatically emit OTel log records. Do **not** duplicate calls using a separate OTel log API — the bridge handles the mapping.
+
+### Initialization
+
+Initialize all three pipelines in `main.rs` before starting the server and shut them down gracefully on signal. Export to an **OTel Collector** via OTLP/gRPC. Configure the endpoint via the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable — never hardcode it.
+
+Attach `service.name` and `service.version` as resource attributes on the tracer and meter providers so all signals are correlated by service identity.
+
+### Naming Conventions
+
+- **Span names**: `{layer}.{operation}` in snake_case
+- **Metric names**: OTel semantic conventions first (`http.server.*`), then `app.*` namespace for domain metrics
+- **Attribute keys**: lowercase dot-notation (e.g., `request_id`, `http.route`, `error.kind`)
+
+### Security Notes for OTel
+
+- Never include request/response bodies in span attributes — treat them as potential PII.
+- Apply the same masking rules from §1 before attaching any auth-related values to spans.
+- Use TLS for the OTLP channel in production (`OTEL_EXPORTER_OTLP_CERTIFICATE`).
+
 ## Related Skills
 
 - For Rust implementation specifics, refer to the **rust-master** skill.

@@ -4,7 +4,7 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Default)]
 pub struct ServerConfig {
     #[serde(default)]
     pub server: ServerSection,
@@ -203,18 +203,10 @@ impl Default for AuthConfig {
     }
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Default)]
 pub struct MagicConfig {
     #[serde(default)]
     pub database_path: Option<String>,
-}
-
-impl Default for MagicConfig {
-    fn default() -> Self {
-        Self {
-            database_path: None,
-        }
-    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -255,18 +247,6 @@ impl Default for ServerSection {
     }
 }
 
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            server: ServerSection::default(),
-            analysis: AnalysisConfig::default(),
-            sandbox: SandboxConfig::default(),
-            auth: AuthConfig::default(),
-            magic: MagicConfig::default(),
-            logging: LoggingConfig::default(),
-        }
-    }
-}
 
 impl ServerConfig {
     pub fn load(config_path: Option<String>) -> Self {
@@ -284,16 +264,16 @@ impl ServerConfig {
         }
 
         // Ensure directories exist instead of just failing
-        if let Err(_) = fs::create_dir_all(&self.sandbox.base_dir) {
-            if !Path::new(&self.sandbox.base_dir).exists() {
-                return Err(ValidationError::FileNotFound);
-            }
+        if fs::create_dir_all(&self.sandbox.base_dir).is_err()
+            && !Path::new(&self.sandbox.base_dir).exists()
+        {
+            return Err(ValidationError::FileNotFound);
         }
 
-        if let Err(_) = fs::create_dir_all(&self.analysis.temp_dir) {
-            if !Path::new(&self.analysis.temp_dir).exists() {
-                return Err(ValidationError::FileNotFound);
-            }
+        if fs::create_dir_all(&self.analysis.temp_dir).is_err()
+            && !Path::new(&self.analysis.temp_dir).exists()
+        {
+            return Err(ValidationError::FileNotFound);
         }
 
         if self.auth.username.is_empty() || self.auth.password.is_empty() {
@@ -317,10 +297,12 @@ impl ServerConfig {
         if let Ok(host) = env::var("MAGICER_HOST").or_else(|_| env::var("HOST")) {
             self.server.host = host;
         }
-        if let Ok(port) = env::var("MAGICER_PORT").or_else(|_| env::var("PORT")) {
-            if let Ok(port) = port.parse() {
-                self.server.port = port;
-            }
+        if let Some(port) = env::var("MAGICER_PORT")
+            .or_else(|_| env::var("PORT"))
+            .ok()
+            .and_then(|s| s.parse().ok())
+        {
+            self.server.port = port;
         }
         if let Ok(val) = env::var("MAGICER_AUTH_USERNAME") {
             self.auth.username = val;
@@ -331,10 +313,11 @@ impl ServerConfig {
         if let Ok(val) = env::var("MAGICER_SANDBOX_DIR") {
             self.sandbox.base_dir = val;
         }
-        if let Ok(val) = env::var("ANALYSIS_LARGE_FILE_THRESHOLD_MB") {
-            if let Ok(val) = val.parse() {
-                self.analysis.large_file_threshold_mb = val;
-            }
+        if let Some(val) = env::var("ANALYSIS_LARGE_FILE_THRESHOLD_MB")
+            .ok()
+            .and_then(|s| s.parse().ok())
+        {
+            self.analysis.large_file_threshold_mb = val;
         }
         if let Ok(val) = env::var("MAGICER_LOG_LEVEL") {
             self.logging.level = val;

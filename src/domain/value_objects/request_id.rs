@@ -1,8 +1,15 @@
 use crate::domain::errors::ValidationError;
+use std::fmt;
 use uuid::Uuid;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct RequestId(String);
+
+impl fmt::Display for RequestId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 impl RequestId {
     pub fn generate() -> Self {

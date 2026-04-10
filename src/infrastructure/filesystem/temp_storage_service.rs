@@ -13,7 +13,7 @@ pub struct FsTempFile {
 impl FsTempFile {
     pub async fn new(base_dir: &Path) -> Result<Self, std::io::Error> {
         let handler = TempFileHandler::new_empty(base_dir)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
         
         let file = OpenOptions::new()
             .write(true)
@@ -37,7 +37,7 @@ impl TemporaryFile for FsTempFile {
         if let Some(file) = &mut self.file {
             file.write_all(data).await
         } else {
-            Err(std::io::Error::new(std::io::ErrorKind::Other, "File not open"))
+            Err(std::io::Error::other("File not open"))
         }
     }
 

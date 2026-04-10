@@ -3,3 +3,4 @@ pub mod config;
 pub mod errors;
 pub mod filesystem;
 pub mod magic;
+pub mod telemetry;

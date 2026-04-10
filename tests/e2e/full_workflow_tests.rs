@@ -38,7 +38,8 @@ fn setup_test_server(config_override: Option<Box<dyn FnOnce(&mut ServerConfig)>>
         f(&mut config);
     }
     
-    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, Arc::new(config)));
+    let metrics = Arc::new(magicer::infrastructure::telemetry::metrics::AppMetrics::new(&opentelemetry::global::meter("test")));
+    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, Arc::new(config), metrics));
     let app = create_router(state)
         .layer(middleware::from_fn(error_handler::handle_error))
         .layer(middleware::from_fn(request_id::add_request_id));

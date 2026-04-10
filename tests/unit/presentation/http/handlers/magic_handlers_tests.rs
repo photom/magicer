@@ -2,6 +2,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+use magicer::infrastructure::telemetry::metrics::AppMetrics;
 use magicer::presentation::http::router::create_router;
 use magicer::presentation::state::app_state::AppState;
 use magicer::presentation::http::middleware::{error_handler, request_id};
@@ -14,6 +15,10 @@ use std::sync::Arc;
 use std::path::PathBuf;
 use axum::middleware;
 
+fn noop_metrics() -> Arc<AppMetrics> {
+    Arc::new(AppMetrics::new(&opentelemetry::global::meter("test")))
+}
+
 #[tokio::test]
 async fn test_analyze_content_handler_success() {
     let magic_repo = Arc::new(FakeMagicRepository::new().unwrap());
@@ -21,7 +26,7 @@ async fn test_analyze_content_handler_success() {
     let temp_storage = Arc::new(FakeTempStorageService::new(PathBuf::from("/tmp")));
     let auth_service = Arc::new(FakeAuth);
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, config));
+    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, config, noop_metrics()));
     let router = create_router(state)
         .layer(middleware::from_fn(error_handler::handle_error))
         .layer(middleware::from_fn(request_id::add_request_id));
@@ -57,7 +62,7 @@ async fn test_analyze_path_handler_success() {
 
     let auth_service = Arc::new(FakeAuth);
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, config));
+    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, config, noop_metrics()));
     let router = create_router(state)
         .layer(middleware::from_fn(error_handler::handle_error))
         .layer(middleware::from_fn(request_id::add_request_id));
@@ -93,7 +98,7 @@ async fn test_analyze_content_handler_large_file_streaming() {
     config.analysis.large_file_threshold_mb = 0;
     let config = Arc::new(config);
     
-    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, config));
+    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, config, noop_metrics()));
     let router = create_router(state)
         .layer(middleware::from_fn(error_handler::handle_error))
         .layer(middleware::from_fn(request_id::add_request_id));
@@ -123,7 +128,7 @@ async fn test_analyze_content_handler_chunked_streaming() {
     let temp_storage = Arc::new(FakeTempStorageService::new(PathBuf::from("/tmp")));
     let auth_service = Arc::new(FakeAuth);
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage.clone(), auth_service, config));
+    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage.clone(), auth_service, config, noop_metrics()));
     let router = create_router(state)
         .layer(middleware::from_fn(error_handler::handle_error))
         .layer(middleware::from_fn(request_id::add_request_id));
@@ -159,7 +164,7 @@ async fn test_analyze_content_handler_threshold_streaming() {
     config.analysis.large_file_threshold_mb = 1; // 1MB threshold
     let config = Arc::new(config);
     
-    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage.clone(), auth_service, config));
+    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage.clone(), auth_service, config, noop_metrics()));
     let router = create_router(state)
         .layer(middleware::from_fn(error_handler::handle_error))
         .layer(middleware::from_fn(request_id::add_request_id));

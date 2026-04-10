@@ -3,12 +3,14 @@ use clap::Parser;
 use magicer::infrastructure::auth::basic_auth_service::BasicAuthService;
 use magicer::infrastructure::config::server_config::ServerConfig;
 use magicer::infrastructure::filesystem::sandbox::PathSandbox;
+use magicer::infrastructure::telemetry::metrics::AppMetrics;
+use magicer::infrastructure::telemetry::Telemetry;
 use magicer::presentation::http::middleware::request_id;
 use magicer::presentation::http::router::create_router;
 use magicer::presentation::state::app_state::AppState;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
 use tower::limit::concurrency::ConcurrencyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
@@ -26,8 +28,9 @@ async fn main() {
     // Parse CLI arguments
     let args = Args::parse();
 
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
+    // Initialise OpenTelemetry (traces + metrics + logs) before anything else.
+    // Replaces the previous `tracing_subscriber::fmt::init()` call.
+    let _telemetry = Telemetry::init();
 
     // Load configuration
     let config = ServerConfig::load(args.config);
@@ -40,7 +43,7 @@ async fn main() {
         config.server.max_open_files as u64,
         config.server.max_open_files as u64,
     ) {
-        tracing::warn!("Failed to set max_open_files limit: {}", e);
+        tracing::warn!(error = %e, "Failed to set max_open_files limit");
     }
 
     // Initialize infrastructure
@@ -65,6 +68,10 @@ async fn main() {
         &config.auth.password,
     ));
 
+    // Build OTel metric instruments from the global meter provider (set by Telemetry::init).
+    let meter = opentelemetry::global::meter(env!("CARGO_PKG_NAME"));
+    let metrics = Arc::new(AppMetrics::new(&meter));
+
     // Address to bind to
     let addr = format!("{}:{}", config.server.host, config.server.port);
     let socket_addr: std::net::SocketAddr = addr.parse().expect("Invalid bind address");
@@ -76,6 +83,7 @@ async fn main() {
         temp_storage,
         auth_service,
         Arc::new(config.clone()),
+        Arc::clone(&metrics),
     ));
 
     // Build router with middleware and limits
@@ -111,10 +119,16 @@ async fn main() {
     std_listener.set_nonblocking(true).unwrap();
     let listener = TcpListener::from_std(std_listener).unwrap();
 
-    tracing::info!("Listening on {} (backlog: {})", addr, config.server.backlog);
+    // L-01: server.addr and server.backlog are structured fields — not interpolated strings.
+    tracing::info!(
+        server.addr = %addr,
+        server.backlog = config.server.backlog,
+        "Server listening"
+    );
 
     // Start background cleanup task
     let cleanup_config = config.clone();
+    let cleanup_metrics = Arc::clone(&metrics);
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(300)); // Every 5 minutes
         loop {
@@ -122,30 +136,62 @@ async fn main() {
             let temp_dir = &cleanup_config.analysis.temp_dir;
             let max_age = cleanup_config.analysis.temp_file_max_age_secs;
 
+            let cycle_start = Instant::now();
+            let mut removed_count: u64 = 0;
+
             if let Ok(mut entries) = tokio::fs::read_dir(temp_dir).await {
                 while let Ok(Some(entry)) = entries.next_entry().await {
-                    if let Ok(metadata) = entry.metadata().await {
-                        if metadata.is_file() {
-                            if let Ok(modified) = metadata.modified() {
-                                if let Ok(elapsed) = modified.elapsed() {
-                                    if elapsed.as_secs() > max_age {
-                                        let path = entry.path();
-                                        if let Err(e) = tokio::fs::remove_file(&path).await {
-                                            tracing::warn!(
-                                                "Failed to remove orphaned temp file {:?}: {}",
-                                                path,
-                                                e
-                                            );
-                                        } else {
-                                            tracing::info!("Removed orphaned temp file {:?}", path);
-                                        }
-                                    }
-                                }
-                            }
+                    let is_expired = entry.metadata().await.ok().and_then(|m| {
+                        if !m.is_file() {
+                            return None;
+                        }
+                        m.modified()
+                            .ok()
+                            .and_then(|t| t.elapsed().ok())
+                            .map(|e| e.as_secs() > max_age)
+                    });
+
+                    if is_expired == Some(true) {
+                        let path = entry.path();
+                        // L-02: log only the filename component, never the
+                        // full resolved sandbox path.
+                        let file_name = path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned();
+                        if let Err(e) = tokio::fs::remove_file(&path).await {
+                            tracing::warn!(
+                                file.name = %file_name,
+                                error = %e,
+                                "Failed to remove orphaned temp file"
+                            );
+                        } else {
+                            tracing::info!(
+                                file.name = %file_name,
+                                "Removed orphaned temp file"
+                            );
+                            removed_count += 1;
                         }
                     }
                 }
             }
+
+            let cycle_ms = cycle_start.elapsed().as_secs_f64() * 1000.0;
+            cleanup_metrics
+                .tempfile_cleanup_duration
+                .record(cycle_ms, &[]);
+            if removed_count > 0 {
+                cleanup_metrics
+                    .tempfile_cleanup_removed
+                    .add(removed_count, &[]);
+            }
+
+            // Emit cleanup removed count as a structured span attribute (not a raw list).
+            tracing::debug!(
+                filesystem.cleanup.removed_count = removed_count,
+                "Temp file cleanup cycle complete"
+            );
         }
     });
 
@@ -153,6 +199,9 @@ async fn main() {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .unwrap();
+
+    // Flush all in-flight telemetry before the process exits.
+    _telemetry.shutdown();
 }
 
 async fn shutdown_signal() {

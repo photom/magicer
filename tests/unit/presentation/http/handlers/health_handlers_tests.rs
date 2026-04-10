@@ -2,6 +2,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+use magicer::infrastructure::telemetry::metrics::AppMetrics;
 use magicer::presentation::http::router::create_router;
 use magicer::presentation::state::app_state::AppState;
 use magicer::presentation::http::middleware::{error_handler, request_id};
@@ -10,7 +11,7 @@ use magicer::infrastructure::filesystem::sandbox::PathSandbox;
 use crate::fake_auth::FakeAuth;
 use crate::fake_temp_storage::FakeTempStorageService;
 use tower::ServiceExt;
- 
+
 use std::sync::Arc;
 use std::path::PathBuf;
 use axum::middleware;
@@ -22,7 +23,8 @@ async fn test_ping_handler() {
     let temp_storage = Arc::new(FakeTempStorageService::new(PathBuf::from("/tmp")));
     let auth_service = Arc::new(FakeAuth);
     let config = Arc::new(magicer::infrastructure::config::server_config::ServerConfig::default());
-    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, config));
+    let metrics = Arc::new(AppMetrics::new(&opentelemetry::global::meter("test")));
+    let state = Arc::new(AppState::new(magic_repo, sandbox, temp_storage, auth_service, config, metrics));
     let router = create_router(state)
         .layer(middleware::from_fn(error_handler::handle_error))
         .layer(middleware::from_fn(request_id::add_request_id));
