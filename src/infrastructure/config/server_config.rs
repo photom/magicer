@@ -186,12 +186,21 @@ impl Default for SandboxConfig {
     }
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Clone)]
 pub struct AuthConfig {
     #[serde(default)]
     pub username: String,
     #[serde(default)]
     pub password: String,
+}
+
+impl std::fmt::Debug for AuthConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthConfig")
+            .field("username", &self.username)
+            .field("password", &"***")
+            .finish()
+    }
 }
 
 impl Default for AuthConfig {
