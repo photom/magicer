@@ -35,7 +35,7 @@ opentelemetry-appender-tracing = { version = "0.27", features = ["log"] }
 # Security
 subtle = "2.6"
 base64 = "0.22"
-uuid = { version = "1.21", features = ["v4", "serde"] }
+uuid = { version = "1.23", features = ["v4", "serde"] }
 rand = "0.10.0"
 chrono = { version = "0.4", features = ["serde"] }
 
