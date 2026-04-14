@@ -30,7 +30,7 @@ opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "logs"] }
 opentelemetry-otlp = { version = "0.27", features = ["tonic", "logs"] }
 opentelemetry-semantic-conventions = "0.27"
 tracing-opentelemetry = "0.28"
-opentelemetry-appender-tracing = { version = "0.27", features = ["log"] }
+opentelemetry-appender-tracing = { version = "0.31", features = ["log"] }
 
 # Security
 subtle = "2.6"
